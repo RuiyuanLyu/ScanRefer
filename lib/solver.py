@@ -309,6 +309,34 @@ class Solver():
             # move to cuda
             for key in data_dict:
                 data_dict[key] = data_dict[key].cuda()
+            # es_mod
+            point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])
+            lang_feat = data_dict["lang_feat"] # torch.float32([14, 126, 300])
+            lang_len = data_dict["lang_len"] # torch.int64([14])
+            center_label = data_dict["center_label"] # torch.float32([14, 128, 3])
+            heading_class_label = data_dict["heading_class_label"] # torch.int64([14, 128])
+            heading_residual_label = data_dict["heading_residual_label"] # torch.int64([14, 128])
+            size_class_label = data_dict["size_class_label"] # torch.int64([14, 128])
+            size_residual_label = data_dict["size_residual_label"] # torch.float32([14, 128, 3])
+            num_bbox = data_dict["num_bbox"] # torch.int64([14])
+            sem_cls_label = data_dict["sem_cls_label"] # torch.int64([14, 128])
+            box_label_mask = data_dict["box_label_mask"] # torch.float32([14, 128])
+            vote_label = data_dict["vote_label"] # torch.float32([14, 40000, 9])
+            vote_label_mask = data_dict["vote_label_mask"] # torch.int64([14, 40000])
+            scan_idx = data_dict["scan_idx"] # torch.int64([14])
+            pcl_color = data_dict["pcl_color"] # torch.float32([14, 40000, 3]), range -1 to 1
+            ref_box_label = data_dict["ref_box_label"] # torch.int64([14, 128])
+            ref_center_label = data_dict["ref_center_label"] # torch.float32([14, 3])
+            ref_heading_class_label = data_dict["ref_heading_class_label"] # torch.int64([14])
+            ref_heading_residual_label = data_dict["ref_heading_residual_label"] # torch.int64([14])
+            ref_size_class_label = data_dict["ref_size_class_label"] # torch.int64([14])
+            ref_size_residual_label = data_dict["ref_size_residual_label"] # torch.float32([14, 3])
+            object_id = data_dict["object_id"] # torch.int64([14])
+            ann_id = data_dict["ann_id"] # torch.int64([14])
+            object_cat = data_dict["object_cat"] # torch.int64([14])
+            unique_multiple = data_dict["unique_multiple"] # torch.int64([14])
+            load_time = data_dict["load_time"] # torch.float64([14])
+
 
             # initialize the running loss
             self._running_log = {
