@@ -11,6 +11,7 @@ import json
 import pickle
 import numpy as np
 import multiprocessing as mp
+import torch
 from torch.utils.data import Dataset
 
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
@@ -28,10 +29,25 @@ SCANNET_V2_TSV = os.path.join(CONF.PATH.SCANNET_META, "scannetv2-labels.combined
 # MULTIVIEW_DATA = os.path.join(CONF.PATH.SCANNET_DATA, "enet_feats.hdf5")
 MULTIVIEW_DATA = CONF.MULTIVIEW
 GLOVE_PICKLE = os.path.join(CONF.PATH.DATA, "glove.p")
+UNK_CLASS_ID = 165 # for "object" in es. The actural value is 166, but es counts from 1.
+
+import nltk
+from nltk.tokenize import word_tokenize
+nltk.download('punkt')
+
+def tokenize_text(description):
+    tokens = word_tokenize(description)
+    return tokens    
+
+from .utils_read import read_es_infos, RAW2NUM_3RSCAN, NUM2RAW_3RSCAN, apply_mapping_to_keys, to_scene_id
+        
+with open("/mnt/petrelfs/lvruiyuan/embodiedscan_infos/3rscan_mapping.json", "r") as f:
+    mapping_3rscan = json.load(f)
+mapping_3rscan = {v:k for k, v in mapping_3rscan.items()}
 
 class ScannetReferenceDataset(Dataset):
        
-    def __init__(self, scanrefer, scanrefer_all_scene, 
+    def __init__(self, es_info_file, vg_raw_data_file, 
         split="train", 
         num_points=40000,
         use_height=False, 
@@ -39,9 +55,14 @@ class ScannetReferenceDataset(Dataset):
         use_normal=False, 
         use_multiview=False, 
         augment=False):
-
+        self.es_info_file = es_info_file
+        self.vg_raw_data_file = vg_raw_data_file
+        self.es_info = read_es_infos(es_info_file)
+        self.es_info = apply_mapping_to_keys(self.es_info, NUM2RAW_3RSCAN)
+        scanrefer = self._vg_raw_to_scanrefer(vg_raw_data_file)
         self.scanrefer = scanrefer
-        self.scanrefer_all_scene = scanrefer_all_scene # all scene_ids in scanrefer
+        # self.scanrefer_all_scene = scanrefer_all_scene # all scene_ids in scanrefer
+        self.scanrefer_all_scene = sorted(list(self.es_info.keys()))
         self.split = split
         self.num_points = num_points
         self.use_color = use_color        
@@ -53,7 +74,8 @@ class ScannetReferenceDataset(Dataset):
         # load data
         self._load_data()
         self.multiview_data = {}
-       
+
+
     def __len__(self):
         return len(self.scanrefer)
 
@@ -82,7 +104,9 @@ class ScannetReferenceDataset(Dataset):
             pcl_color = mesh_vertices[:,3:6]
         else:
             point_cloud = mesh_vertices[:,0:6] 
-            point_cloud[:,3:6] = (point_cloud[:,3:6]-MEAN_COLOR_RGB)/256.0
+            # point_cloud[:,3:6] = (point_cloud[:,3:6]-MEAN_COLOR_RGB)/256.0
+            # es_mod: the color loaded from new data is normalized, so we don't need to normalize again.
+            point_cloud[:,3:6] = point_cloud[:,3:6]-MEAN_COLOR_RGB/256.0
             pcl_color = point_cloud[:,3:6]
         
         if self.use_normal:
@@ -172,13 +196,16 @@ class ScannetReferenceDataset(Dataset):
             for i_instance in np.unique(instance_labels):            
                 # find all points belong to that instance
                 ind = np.where(instance_labels == i_instance)[0]
+                if len(ind) < 10: 
+                    continue
                 # find the semantic label            
-                if semantic_labels[ind[0]] in DC.nyu40ids:
-                    x = point_cloud[ind,:3]
-                    center = 0.5*(x.min(0) + x.max(0))
-                    point_votes[ind, :] = center - x
-                    point_votes_mask[ind] = 1.0
+                # if semantic_labels[ind[0]] in DC.nyu40ids:
+                x = point_cloud[ind,:3]
+                center = 0.5*(x.min(0) + x.max(0))
+                point_votes[ind, :] = center - x
+                point_votes_mask[ind] = 1.0
             point_votes = np.tile(point_votes, (1, 3)) # make 3 votes identical 
+            
             
             class_ind = [DC.nyu40id2class[int(x)] for x in instance_bboxes[:num_bbox,-2]]
             # NOTE: set size class as semantic class. Consider use size2class.
@@ -205,8 +232,11 @@ class ScannetReferenceDataset(Dataset):
             target_bboxes_semcls[0:num_bbox] = [DC.nyu40id2class[int(x)] for x in instance_bboxes[:,-2][0:num_bbox]]
         except KeyError:
             pass
-
-        object_cat = self.raw2label[object_name] if object_name in self.raw2label else 17
+        if object_name in self.raw2label:
+            object_cat = self.raw2label[object_name]
+        else:
+            print(f"unknown object name {object_name}")
+            object_cat = UNK_CLASS_ID
 
         data_dict = {}
         data_dict["point_clouds"] = point_cloud.astype(np.float32) # point cloud data including features
@@ -239,25 +269,54 @@ class ScannetReferenceDataset(Dataset):
         data_dict["load_time"] = time.time() - start
 
         return data_dict
-    
-    def _get_raw2label(self):
+
+    def _vg_raw_to_scanrefer(self, vg_raw_data_file):
+        ret = []
+        data = json.load(open(vg_raw_data_file))
+        tmp_save = {}
+        # tmp_save[scene_id][object_id] records num annos
+        for i, d in enumerate(data):
+            out_dict = {}
+            scene_id = to_scene_id(d["scan_id"])
+            out_dict["scene_id"] = NUM2RAW_3RSCAN.get(scene_id, scene_id) # a hack here. The pcd files are saved differently. 3rscan are in raw, scannet and mp3d are in num.
+            tmp_save[d["scan_id"]] = tmp_save.get(d["scan_id"], {})
+            target_id = d['target_id']
+            target_id = target_id[0] if isinstance(target_id, list) else target_id
+            if not isinstance(target_id, int):
+                continue
+            out_dict["object_id"] = str(target_id)
+            tmp_save[d["scan_id"]][out_dict["object_id"]] = tmp_save[d["scan_id"]].get(out_dict["object_id"], -1) + 1
+            out_dict["object_name"] = d["target"][0] if isinstance(d["target"], list) else d["target"]
+            out_dict["ann_id"] = str(tmp_save[d["scan_id"]][out_dict["object_id"]])
+            out_dict["description"] = d["text"].lower()
+            out_dict["token"] = tokenize_text(d["text"].lower())
+            ret.append(out_dict)
+        del tmp_save
+        return ret
+
+    def _get_raw2label(self, count_type_from_zero=True):
+        """
+            Designed to map raw object names to nyu40 ids (int)
+            es_mod: map object names to label ids (int)
+        """
         # mapping
-        scannet_labels = DC.type2class.keys()
-        scannet2label = {label: i for i, label in enumerate(scannet_labels)}
+        # scannet_labels = DC.type2class.keys()
+        # scannet2label = {label: i for i, label in enumerate(scannet_labels)}
 
-        lines = [line.rstrip() for line in open(SCANNET_V2_TSV)]
-        lines = lines[1:]
-        raw2label = {}
-        for i in range(len(lines)):
-            label_classes_set = set(scannet_labels)
-            elements = lines[i].split('\t')
-            raw_name = elements[1]
-            nyu40_name = elements[7]
-            if nyu40_name not in label_classes_set:
-                raw2label[raw_name] = scannet2label['others']
-            else:
-                raw2label[raw_name] = scannet2label[nyu40_name]
-
+        # lines = [line.rstrip() for line in open(SCANNET_V2_TSV)]
+        # lines = lines[1:]
+        # raw2label = {}
+        # for i in range(len(lines)):
+        #     label_classes_set = set(scannet_labels)
+        #     elements = lines[i].split('\t')
+        #     raw_name = elements[1]
+        #     nyu40_name = elements[7]
+        #     if nyu40_name not in label_classes_set:
+        #         raw2label[raw_name] = scannet2label['others']
+        #     else:
+        #         raw2label[raw_name] = scannet2label[nyu40_name]
+        raw2label = np.load(self.es_info_file, allow_pickle=True)["metainfo"]["categories"] # str2int
+        raw2label = {k: v-count_type_from_zero for k, v in raw2label.items()}
         return raw2label
 
     def _get_unique_multiple_lookup(self):
@@ -280,7 +339,7 @@ class ScannetReferenceDataset(Dataset):
                 try:
                     all_sem_labels[scene_id].append(self.raw2label[object_name])
                 except KeyError:
-                    all_sem_labels[scene_id].append(17)
+                    all_sem_labels[scene_id].append(UNK_CLASS_ID)
 
         # convert to numpy array
         all_sem_labels = {scene_id: np.array(all_sem_labels[scene_id]) for scene_id in all_sem_labels.keys()}
@@ -295,7 +354,7 @@ class ScannetReferenceDataset(Dataset):
             try:
                 sem_label = self.raw2label[object_name]
             except KeyError:
-                sem_label = 17
+                sem_label = UNK_CLASS_ID
 
             unique_multiple = 0 if (all_sem_labels[scene_id] == sem_label).sum() == 1 else 1
 
@@ -355,35 +414,56 @@ class ScannetReferenceDataset(Dataset):
         print("loading data...")
         # load language features
         self.lang = self._tranform_des()
+        self.raw2label = self._get_raw2label()
 
         # add scannet data
         self.scene_list = sorted(list(set([data["scene_id"] for data in self.scanrefer])))
-
         # load scene data
         self.scene_data = {}
         for scene_id in self.scene_list:
+            # "/mnt/hwfile/OpenRobotLab/lvruiyuan/pcd_data/pcd_with_global_alignment"
+            if scene_id not in self.es_info:
+                print(f"drop due to {scene_id} not found in es info")
+                self.scene_list.remove(scene_id)
+                continue
+            es_info = self.es_info[scene_id]
+            if len(es_info["bboxes"]) == 0:
+                continue
+            file_path = os.path.join("/mnt/hwfile/OpenRobotLab/lvruiyuan/pcd_data/pcd_with_global_alignment", scene_id + ".pth")
+            if not os.path.exists(file_path):
+                self.scene_list.remove(scene_id)
+                print(f"drop {scene_id} due to unfound pcd file ")
+                continue
             self.scene_data[scene_id] = {}
-            # self.scene_data[scene_id]["mesh_vertices"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_vert.npy")
-            self.scene_data[scene_id]["mesh_vertices"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_aligned_vert.npy") # axis-aligned
-            self.scene_data[scene_id]["instance_labels"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_ins_label.npy")
-            self.scene_data[scene_id]["semantic_labels"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_sem_label.npy")
-            # self.scene_data[scene_id]["instance_bboxes"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_bbox.npy")
-            self.scene_data[scene_id]["instance_bboxes"] = np.load(os.path.join(CONF.PATH.SCANNET_DATA, scene_id)+"_aligned_bbox.npy")
+            data = torch.load(file_path)
+            pcds, colors, semantic_labels, instance_labels = data
+            self.scene_data[scene_id]["mesh_vertices"] = np.hstack([pcds, colors])
+            assert self.scene_data[scene_id]["mesh_vertices"].shape[1] == 6, self.scene_data[scene_id]["mesh_vertices"].shape
+            self.scene_data[scene_id]["instance_labels"] = instance_labels
+            self.scene_data[scene_id]["semantic_labels"] = semantic_labels
+            boxes = np.zeros((MAX_NUM_OBJ, 8))
+            for i, (bbox, obj_type) in enumerate(zip(es_info["bboxes"], es_info["object_types"])):
+                if i >= MAX_NUM_OBJ:
+                    break
+                boxes[i, :6] = bbox[:6]
+                boxes[i, 6] = self.raw2label[obj_type]
+                boxes[i, 7] = i
+            self.scene_data[scene_id]["instance_bboxes"] = boxes
 
         # prepare class mapping
-        lines = [line.rstrip() for line in open(SCANNET_V2_TSV)]
-        lines = lines[1:]
-        raw2nyuid = {}
-        for i in range(len(lines)):
-            elements = lines[i].split('\t')
-            raw_name = elements[1]
-            nyu40_name = int(elements[4])
-            raw2nyuid[raw_name] = nyu40_name
+        # lines = [line.rstrip() for line in open(SCANNET_V2_TSV)]
+        # lines = lines[1:]
+        # raw2nyuid = {}
+        # for i in range(len(lines)):
+        #     elements = lines[i].split('\t')
+        #     raw_name = elements[1]
+        #     nyu40_name = int(elements[4])
+        #     raw2nyuid[raw_name] = nyu40_name
 
-        # store
-        self.raw2nyuid = raw2nyuid
-        self.raw2label = self._get_raw2label()
+        # # store
+        # self.raw2nyuid = raw2nyuid
         self.unique_multiple_lookup = self._get_unique_multiple_lookup()
+        print(f"successfully loaded {len(self.scene_data.items())} for {self.split} set")
 
     def _translate(self, point_set, bbox):
         # unpack

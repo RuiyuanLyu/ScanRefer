@@ -309,6 +309,7 @@ class Solver():
             # move to cuda
             for key in data_dict:
                 data_dict[key] = data_dict[key].cuda()
+            # import pdb; pdb.set_trace()
             # es_mod
             point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])
             lang_feat = data_dict["lang_feat"] # torch.float32([14, 126, 300])

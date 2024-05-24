@@ -70,7 +70,11 @@ class RefNet(nn.Module):
         Returns:
             end_points: dict
         """
-
+        # for k, v in data_dict.items():
+        #     if isinstance(v, np.ndarray):
+        #         data_dict[k] = torch.tensor(v).to("cuda")
+        #     elif isinstance(v, torch.Tensor):
+        #         data_dict[k] = v.to("cuda")
         #######################################
         #                                     #
         #           DETECTION BRANCH          #

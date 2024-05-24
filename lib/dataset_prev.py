@@ -16,7 +16,7 @@ from torch.utils.data import Dataset
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 from lib.config import CONF
 from utils.pc_utils import random_sampling, rotx, roty, rotz
-from data.scannet.model_util_scannet import rotate_aligned_boxes, ScannetDatasetConfig, rotate_aligned_boxes_along_axis
+from data.scannet.model_util_scannet_prev import rotate_aligned_boxes, ScannetDatasetConfig, rotate_aligned_boxes_along_axis
 
 # data setting
 DC = ScannetDatasetConfig()
@@ -29,7 +29,7 @@ SCANNET_V2_TSV = os.path.join(CONF.PATH.SCANNET_META, "scannetv2-labels.combined
 MULTIVIEW_DATA = CONF.MULTIVIEW
 GLOVE_PICKLE = os.path.join(CONF.PATH.DATA, "glove.p")
 
-class EsDataset(Dataset):
+class ScannetReferenceDataset(Dataset):
        
     def __init__(self, scanrefer, scanrefer_all_scene, 
         split="train", 
@@ -39,7 +39,7 @@ class EsDataset(Dataset):
         use_normal=False, 
         use_multiview=False, 
         augment=False):
-        assert use_normal == False, "Normal not supported yet"
+
         self.scanrefer = scanrefer
         self.scanrefer_all_scene = scanrefer_all_scene # all scene_ids in scanrefer
         self.split = split

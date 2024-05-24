@@ -36,7 +36,8 @@ class LangModule(nn.Module):
         """
 
         word_embs = data_dict["lang_feat"]
-        lang_feat = pack_padded_sequence(word_embs, data_dict["lang_len"], batch_first=True, enforce_sorted=False)
+        lengths = data_dict["lang_len"].to("cpu")
+        lang_feat = pack_padded_sequence(word_embs, lengths, batch_first=True, enforce_sorted=False)
     
         # encode description
         _, lang_last = self.gru(lang_feat)
