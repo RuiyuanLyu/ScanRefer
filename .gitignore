@@ -4,6 +4,7 @@ data/ScanRefer*
 data/glove*
 data/scannet/scannet_data
 data/scannet/scans
+data/scannet/glove.p
 data/scannetv2_enet.pth
 
 # cache

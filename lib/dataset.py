@@ -33,15 +33,16 @@ UNK_CLASS_ID = 165 # for "object" in es. The actural value is 166, but es counts
 
 import nltk
 from nltk.tokenize import word_tokenize
-nltk.download('punkt')
+# nltk.download('punkt')
 
 def tokenize_text(description):
     tokens = word_tokenize(description)
     return tokens    
 
 from .utils_read import read_es_infos, RAW2NUM_3RSCAN, NUM2RAW_3RSCAN, apply_mapping_to_keys, to_scene_id
+from .euler_utils import euler_to_matrix_np
         
-with open("/mnt/petrelfs/lvruiyuan/embodiedscan_infos/3rscan_mapping.json", "r") as f:
+with open("/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/3rscan_mapping.json", "r") as f:
     mapping_3rscan = json.load(f)
 mapping_3rscan = {v:k for k, v in mapping_3rscan.items()}
 
@@ -133,7 +134,7 @@ class ScannetReferenceDataset(Dataset):
         pcl_color = pcl_color[choices]
         
         # ------------------------------- LABELS ------------------------------    
-        target_bboxes = np.zeros((MAX_NUM_OBJ, 6))
+        target_bboxes = np.zeros((MAX_NUM_OBJ, 9))
         target_bboxes_mask = np.zeros((MAX_NUM_OBJ))    
         angle_classes = np.zeros((MAX_NUM_OBJ,))
         angle_residuals = np.zeros((MAX_NUM_OBJ,))
@@ -145,47 +146,68 @@ class ScannetReferenceDataset(Dataset):
         ref_heading_residual_label = 0
         ref_size_class_label = 0
         ref_size_residual_label = np.zeros(3) # bbox size residual for reference target
+        ref_rot_mat = np.zeros((3,3))
+        
+        target_bboxes_rot_mat = None    # If target bboxes rot mat is not None, then the target bbox euler angle is not trusted
 
         if self.split != "test":
             num_bbox = instance_bboxes.shape[0] if instance_bboxes.shape[0] < MAX_NUM_OBJ else MAX_NUM_OBJ
             target_bboxes_mask[0:num_bbox] = 1
-            target_bboxes[0:num_bbox,:] = instance_bboxes[:MAX_NUM_OBJ,0:6]
+            target_bboxes[0:num_bbox, :] = instance_bboxes[:MAX_NUM_OBJ,0:9]
 
             point_votes = np.zeros([self.num_points, 3])
             point_votes_mask = np.zeros(self.num_points)
+            
 
-            # ------------------------------- DATA AUGMENTATION ------------------------------        
+            # ------------------------------- DATA AUGMENTATION ------------------------------
             if self.augment and not self.debug:
+                # TODO
                 if np.random.random() > 0.5:
                     # Flipping along the YZ plane
                     point_cloud[:,0] = -1 * point_cloud[:,0]
-                    target_bboxes[:,0] = -1 * target_bboxes[:,0]                
+                    target_bboxes[:,0] = -1 * target_bboxes[:,0]
+                    target_bboxes[:,6] = -target_bboxes[:,6] + np.pi
+                    target_bboxes[:,8] = -target_bboxes[:,8]
                     
                 if np.random.random() > 0.5:
                     # Flipping along the XZ plane
                     point_cloud[:,1] = -1 * point_cloud[:,1]
-                    target_bboxes[:,1] = -1 * target_bboxes[:,1]                                
+                    target_bboxes[:,1] = -1 * target_bboxes[:,1]
+                    target_bboxes[:,6] = -target_bboxes[:,6]
+                    target_bboxes[:,7] = -target_bboxes[:,1] + np.pi
 
-                # Rotation along X-axis
-                rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
-                rot_mat = rotx(rot_angle)
-                point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
-                target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "x")
+                # # Rotation along X-axis
+                # rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
+                # rot_mat = rotx(rot_angle)
+                # point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
+                # target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "x")
 
-                # Rotation along Y-axis
-                rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
-                rot_mat = roty(rot_angle)
-                point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
-                target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "y")
+                # # Rotation along Y-axis
+                # rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
+                # rot_mat = roty(rot_angle)
+                # point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
+                # target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "y")
 
                 # Rotation along up-axis/Z-axis
-                rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
+                target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
+                rot_angle = np.random.uniform(-0.087266, 0.087266)
+                # rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
                 rot_mat = rotz(rot_angle)
                 point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
-                target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "z")
+                # target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "z")
+                target_bboxes[:, 0:3] = np.dot(target_bboxes[:, 0:3], rot_mat)
+                target_bboxes_rot_mat = np.matmul(target_bboxes_rot_mat, rot_mat)
+                
+                # Scale
+                scale_factor = np.random.uniform(0.9, 1.1)
+                target_bboxes[:, 0:6] *= scale_factor
+                point_cloud[:,0:3] *= scale_factor
 
                 # Translation
-                point_cloud, target_bboxes = self._translate(point_cloud, target_bboxes)
+                # point_cloud, target_bboxes = self._translate(point_cloud, target_bboxes)
+                trans_factor = np.random.normal(scale=np.array([.1, .1, .1], dtype=np.float32), size=3).T
+                point_cloud[:, 0:3] += trans_factor
+                target_bboxes[:, 0:3] += trans_factor
 
             # compute votes *AFTER* augmentation
             # generate votes
@@ -213,6 +235,8 @@ class ScannetReferenceDataset(Dataset):
             size_residuals[0:num_bbox, :] = target_bboxes[0:num_bbox, 3:6] - DC.mean_size_arr[class_ind,:]
 
             # construct the reference target label for each bbox
+            if target_bboxes_rot_mat is None:
+                target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
             ref_box_label = np.zeros(MAX_NUM_OBJ)
             for i, gt_id in enumerate(instance_bboxes[:num_bbox,-1]):
                 if gt_id == object_id:
@@ -222,6 +246,7 @@ class ScannetReferenceDataset(Dataset):
                     ref_heading_residual_label = angle_residuals[i]
                     ref_size_class_label = size_classes[i]
                     ref_size_residual_label = size_residuals[i]
+                    ref_rot_mat = target_bboxes_rot_mat[i]
         else:
             num_bbox = 1
             point_votes = np.zeros([self.num_points, 9]) # make 3 votes identical 
@@ -237,6 +262,9 @@ class ScannetReferenceDataset(Dataset):
         else:
             print(f"unknown object name {object_name}")
             object_cat = UNK_CLASS_ID
+        
+        if target_bboxes_rot_mat is None:
+            target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
 
         data_dict = {}
         data_dict["point_clouds"] = point_cloud.astype(np.float32) # point cloud data including features
@@ -245,6 +273,8 @@ class ScannetReferenceDataset(Dataset):
         data_dict["center_label"] = target_bboxes.astype(np.float32)[:,0:3] # (MAX_NUM_OBJ, 3) for GT box center XYZ
         data_dict["heading_class_label"] = angle_classes.astype(np.int64) # (MAX_NUM_OBJ,) with int values in 0,...,NUM_HEADING_BIN-1
         data_dict["heading_residual_label"] = angle_residuals.astype(np.float32) # (MAX_NUM_OBJ,)
+        data_dict["target_bbox"] = target_bboxes.astype(np.float32)
+        data_dict["target_rot_mat"] = target_bboxes_rot_mat.astype(np.float32)
         data_dict["size_class_label"] = size_classes.astype(np.int64) # (MAX_NUM_OBJ,) with int values in 0,...,NUM_SIZE_CLUSTER
         data_dict["size_residual_label"] = size_residuals.astype(np.float32) # (MAX_NUM_OBJ, 3)
         data_dict["num_bbox"] = np.array(num_bbox).astype(np.int64)
@@ -259,6 +289,7 @@ class ScannetReferenceDataset(Dataset):
         data_dict["ref_center_label"] = ref_center_label.astype(np.float32)
         data_dict["ref_heading_class_label"] = np.array(int(ref_heading_class_label)).astype(np.int64)
         data_dict["ref_heading_residual_label"] = np.array(int(ref_heading_residual_label)).astype(np.int64)
+        data_dict["ref_rot_mat"] = ref_rot_mat.astype(np.float32)
         data_dict["ref_size_class_label"] = np.array(int(ref_size_class_label)).astype(np.int64)
         data_dict["ref_size_residual_label"] = ref_size_residual_label.astype(np.float32)
         data_dict["object_id"] = np.array(int(object_id)).astype(np.int64)
@@ -441,13 +472,15 @@ class ScannetReferenceDataset(Dataset):
             assert self.scene_data[scene_id]["mesh_vertices"].shape[1] == 6, self.scene_data[scene_id]["mesh_vertices"].shape
             self.scene_data[scene_id]["instance_labels"] = instance_labels
             self.scene_data[scene_id]["semantic_labels"] = semantic_labels
-            boxes = np.zeros((MAX_NUM_OBJ, 8))
+            boxes = np.zeros((MAX_NUM_OBJ, 8+3))  # x y z w h l yaw roll pitch class id
             for i, (bbox, obj_type) in enumerate(zip(es_info["bboxes"], es_info["object_types"])):
                 if i >= MAX_NUM_OBJ:
                     break
                 boxes[i, :6] = bbox[:6]
-                boxes[i, 6] = self.raw2label[obj_type]
-                boxes[i, 7] = i
+                boxes[i, 6:9] = bbox[6:]
+                boxes[i, 9] = self.raw2label[obj_type]
+                boxes[i, 10] = i
+                
             self.scene_data[scene_id]["instance_bboxes"] = boxes
 
         # prepare class mapping

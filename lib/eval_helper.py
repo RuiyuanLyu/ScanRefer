@@ -118,6 +118,7 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         data_dict['cluster_ref'] = data_dict['cluster_ref'] * pred_masks
 
     if use_oracle:
+        raise NotImplementedError
         pred_center = data_dict['center_label'] # (B,MAX_NUM_OBJ,3)
         pred_heading_class = data_dict['heading_class_label'] # B,K2
         pred_heading_residual = data_dict['heading_residual_label'] # B,K2
@@ -132,10 +133,11 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         pred_size_residual = torch.gather(pred_size_residual, 1, data_dict["object_assignment"].unsqueeze(2).repeat(1, 1, 3))
     else:
         pred_center = data_dict['center'] # (B,K,3)
-        pred_heading_class = torch.argmax(data_dict['heading_scores'], -1) # B,num_proposal
-        pred_heading_residual = torch.gather(data_dict['heading_residuals'], 2, pred_heading_class.unsqueeze(-1)) # B,num_proposal,1
-        pred_heading_class = pred_heading_class # B,num_proposal
-        pred_heading_residual = pred_heading_residual.squeeze(2) # B,num_proposal
+        pred_rot_mat = data_dict['rot_mat'] # (B,K,3,3)
+        # pred_heading_class = torch.argmax(data_dict['heading_scores'], -1) # B,num_proposal
+        # pred_heading_residual = torch.gather(data_dict['heading_residuals'], 2, pred_heading_class.unsqueeze(-1)) # B,num_proposal,1
+        # pred_heading_class = pred_heading_class # B,num_proposal
+        # pred_heading_residual = pred_heading_residual.squeeze(2) # B,num_proposal
         pred_size_class = torch.argmax(data_dict['size_scores'], -1) # B,num_proposal
         pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
         pred_size_class = pred_size_class
@@ -145,8 +147,9 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
     data_dict["pred_mask"] = pred_masks
     data_dict["label_mask"] = label_masks
     data_dict['pred_center'] = pred_center
-    data_dict['pred_heading_class'] = pred_heading_class
-    data_dict['pred_heading_residual'] = pred_heading_residual
+    data_dict['pred_rot_mat'] = pred_rot_mat
+    # data_dict['pred_heading_class'] = pred_heading_class
+    # data_dict['pred_heading_residual'] = pred_heading_residual
     data_dict['pred_size_class'] = pred_size_class
     data_dict['pred_size_residual'] = pred_size_residual
 
@@ -166,9 +169,10 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         # compute the iou
         pred_ref_idx, gt_ref_idx = pred_ref[i], gt_ref[i]
         pred_obb = config.param2obb(
-            pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(), 
-            pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
-            pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
+            pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
+            pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
+            # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
+            # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
             pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
             pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
         )

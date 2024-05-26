@@ -134,10 +134,13 @@ def predict(args):
 
         pred_ref = torch.argmax(data_dict['cluster_ref'] * pred_masks, 1) # (B,)
         pred_center = data_dict['center'] # (B,K,3)
-        pred_heading_class = torch.argmax(data_dict['heading_scores'], -1) # B,num_proposal
-        pred_heading_residual = torch.gather(data_dict['heading_residuals'], 2, pred_heading_class.unsqueeze(-1)) # B,num_proposal,1
-        pred_heading_class = pred_heading_class # B,num_proposal
-        pred_heading_residual = pred_heading_residual.squeeze(2) # B,num_proposal
+        
+        pred_rot_mat = data_dict['rot_mat']
+        # pred_heading_class = torch.argmax(data_dict['heading_scores'], -1) # B,num_proposal
+        # pred_heading_residual = torch.gather(data_dict['heading_residuals'], 2, pred_heading_class.unsqueeze(-1)) # B,num_proposal,1
+        # pred_heading_class = pred_heading_class # B,num_proposal
+        # pred_heading_residual = pred_heading_residual.squeeze(2) # B,num_proposal
+        
         pred_size_class = torch.argmax(data_dict['size_scores'], -1) # B,num_proposal
         pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
         pred_size_class = pred_size_class
@@ -146,10 +149,11 @@ def predict(args):
         for i in range(pred_ref.shape[0]):
             # compute the iou
             pred_ref_idx = pred_ref[i]
-            pred_obb = DC.param2obb(
-                pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(), 
-                pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
-                pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
+            pred_obb = DC.param2obb(            # TODO yesname
+                pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
+                pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
+                # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
+                # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
                 pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
                 pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
             )

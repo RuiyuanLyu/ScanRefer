@@ -14,6 +14,7 @@ from utils.nn_distance import nn_distance, huber_loss
 from lib.ap_helper import parse_predictions
 from lib.loss import SoftmaxRankingLoss
 from utils.box_util import get_3d_box, get_3d_box_batch, box3d_iou, box3d_iou_batch
+from lib.euler_utils import bbox_to_corners, chamfer_distance
 
 FAR_THRESHOLD = 0.6
 NEAR_THRESHOLD = 0.3
@@ -105,7 +106,7 @@ def compute_objectness_loss(data_dict):
     objectness_loss = torch.sum(objectness_loss * objectness_mask)/(torch.sum(objectness_mask)+1e-6)
 
     # Set assignment
-    object_assignment = ind1 # (B,K) with values in 0,1,...,K2-1
+    object_assignment = ind1 # (B,K) with values in 0,1,...,K2-1        # TODO yesname
 
     return objectness_loss, objectness_label, objectness_mask, object_assignment
 
@@ -143,22 +144,7 @@ def compute_box_and_sem_cls_loss(data_dict, config):
     centroid_reg_loss2 = \
         torch.sum(dist2*box_label_mask)/(torch.sum(box_label_mask)+1e-6)
     center_loss = centroid_reg_loss1 + centroid_reg_loss2
-
-    # Compute heading loss
-    heading_class_label = torch.gather(data_dict['heading_class_label'], 1, object_assignment) # select (B,K) from (B,K2)
-    criterion_heading_class = nn.CrossEntropyLoss(reduction='none')
-    heading_class_loss = criterion_heading_class(data_dict['heading_scores'].transpose(2,1), heading_class_label) # (B,K)
-    heading_class_loss = torch.sum(heading_class_loss * objectness_label)/(torch.sum(objectness_label)+1e-6)
-
-    heading_residual_label = torch.gather(data_dict['heading_residual_label'], 1, object_assignment) # select (B,K) from (B,K2)
-    heading_residual_normalized_label = heading_residual_label / (np.pi/num_heading_bin)
-
-    # Ref: https://discuss.pytorch.org/t/convert-int-into-one-hot-format/507/3
-    heading_label_one_hot = torch.cuda.FloatTensor(batch_size, heading_class_label.shape[1], num_heading_bin).zero_()
-    heading_label_one_hot.scatter_(2, heading_class_label.unsqueeze(-1), 1) # src==1 so it's *one-hot* (B,K,num_heading_bin)
-    heading_residual_normalized_loss = huber_loss(torch.sum(data_dict['heading_residuals_normalized']*heading_label_one_hot, -1) - heading_residual_normalized_label, delta=1.0) # (B,K)
-    heading_residual_normalized_loss = torch.sum(heading_residual_normalized_loss*objectness_label)/(torch.sum(objectness_label)+1e-6)
-
+    
     # Compute size loss
     size_class_label = torch.gather(data_dict['size_class_label'], 1, object_assignment) # select (B,K) from (B,K2)
     criterion_size_class = nn.CrossEntropyLoss(reduction='none')
@@ -177,13 +163,39 @@ def compute_box_and_sem_cls_loss(data_dict, config):
     size_residual_normalized_loss = torch.mean(huber_loss(predicted_size_residual_normalized - size_residual_label_normalized, delta=1.0), -1) # (B,K,3) -> (B,K)
     size_residual_normalized_loss = torch.sum(size_residual_normalized_loss*objectness_label)/(torch.sum(objectness_label)+1e-6)
 
+    pred_size_class = torch.argmax(data_dict['size_scores'], -1)
+    pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3))
+    pred_size_residual = pred_size_residual.squeeze(2)
+    pred_size = (1 + pred_size_residual) * mean_size_label  # TODO yesname: Maybe not correct here.
+    # Compute heading loss      # TODO yesname
+    target_rot_mat = torch.gather(data_dict['target_rot_mat'], 1, object_assignment.unsqueeze(-1).unsqueeze(-1).repeat(1,1,3,3))   # B, K, 3x3
+    target_bbox = torch.gather(data_dict['target_bbox'], 1, object_assignment.unsqueeze(-1).repeat(1,1,6))  # B, K, 6
+    pred_rot_mat = data_dict['rot_mat']
+    pred_corners = bbox_to_corners(pred_center, pred_size, pred_rot_mat)
+    target_corners = bbox_to_corners(target_bbox[:, :, :3], target_bbox[:, :, 3:6], target_rot_mat)
+    bbox_cd_loss = chamfer_distance(pred_corners, target_corners, 1.0, 0.0, 'l1', 'mean')
+    
+    # heading_class_label = torch.gather(data_dict['heading_class_label'], 1, object_assignment) # select (B,K) from (B,K2)
+    # criterion_heading_class = nn.CrossEntropyLoss(reduction='none')
+    # heading_class_loss = criterion_heading_class(data_dict['heading_scores'].transpose(2,1), heading_class_label) # (B,K)
+    # heading_class_loss = torch.sum(heading_class_loss * objectness_label)/(torch.sum(objectness_label)+1e-6)
+
+    # heading_residual_label = torch.gather(data_dict['heading_residual_label'], 1, object_assignment) # select (B,K) from (B,K2)
+    # heading_residual_normalized_label = heading_residual_label / (np.pi/num_heading_bin)
+
+    # # Ref: https://discuss.pytorch.org/t/convert-int-into-one-hot-format/507/3
+    # heading_label_one_hot = torch.cuda.FloatTensor(batch_size, heading_class_label.shape[1], num_heading_bin).zero_()
+    # heading_label_one_hot.scatter_(2, heading_class_label.unsqueeze(-1), 1) # src==1 so it's *one-hot* (B,K,num_heading_bin)
+    # heading_residual_normalized_loss = huber_loss(torch.sum(data_dict['heading_residuals_normalized']*heading_label_one_hot, -1) - heading_residual_normalized_label, delta=1.0) # (B,K)
+    # heading_residual_normalized_loss = torch.sum(heading_residual_normalized_loss*objectness_label)/(torch.sum(objectness_label)+1e-6)
+
     # 3.4 Semantic cls loss
     sem_cls_label = torch.gather(data_dict['sem_cls_label'], 1, object_assignment) # select (B,K) from (B,K2)
     criterion_sem_cls = nn.CrossEntropyLoss(reduction='none')
     sem_cls_loss = criterion_sem_cls(data_dict['sem_cls_scores'].transpose(2,1), sem_cls_label) # (B,K)
     sem_cls_loss = torch.sum(sem_cls_loss * objectness_label)/(torch.sum(objectness_label)+1e-6)
 
-    return center_loss, heading_class_loss, heading_residual_normalized_loss, size_class_loss, size_residual_normalized_loss, sem_cls_loss
+    return center_loss, bbox_cd_loss, size_class_loss, size_residual_normalized_loss, sem_cls_loss
 
 def compute_reference_loss(data_dict, config):
     """ Compute cluster reference loss
@@ -257,6 +269,9 @@ def get_loss(data_dict, config, detection=True, reference=True, use_lang_classif
         loss: pytorch scalar tensor
         data_dict: dict
     """
+    
+    # import pdb
+    # pdb.set_trace()
 
     # Vote loss
     vote_loss = compute_vote_loss(data_dict)
@@ -272,8 +287,8 @@ def get_loss(data_dict, config, detection=True, reference=True, use_lang_classif
     data_dict['neg_ratio'] = torch.sum(objectness_mask.float())/float(total_num_proposal) - data_dict['pos_ratio']
 
     # Box loss and sem cls loss
-    center_loss, heading_cls_loss, heading_reg_loss, size_cls_loss, size_reg_loss, sem_cls_loss = compute_box_and_sem_cls_loss(data_dict, config)
-    box_loss = center_loss + 0.1*heading_cls_loss + heading_reg_loss + 0.1*size_cls_loss + size_reg_loss
+    center_loss, bbox_cd_loss, size_cls_loss, size_reg_loss, sem_cls_loss = compute_box_and_sem_cls_loss(data_dict, config)
+    box_loss = center_loss + bbox_cd_loss + 0.1*size_cls_loss + size_reg_loss
 
     if detection:
         data_dict['vote_loss'] = vote_loss

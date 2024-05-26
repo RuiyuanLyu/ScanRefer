@@ -82,7 +82,10 @@ class RefNet(nn.Module):
         #######################################
 
         # --------- HOUGH VOTING ---------
+        # import pdb
+        # pdb.set_trace()
         data_dict = self.backbone_net(data_dict)
+    
                 
         # --------- HOUGH VOTING ---------
         xyz = data_dict["fp2_xyz"]

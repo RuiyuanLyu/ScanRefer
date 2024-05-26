@@ -20,8 +20,8 @@ from lib.solver import Solver
 from lib.config import CONF
 from models.refnet import RefNet
 
-SCANREFER_TRAIN = json.load(open(os.path.join(CONF.PATH.DATA, "ScanRefer_filtered_train.json")))
-SCANREFER_VAL = json.load(open(os.path.join(CONF.PATH.DATA, "ScanRefer_filtered_val.json")))
+# SCANREFER_TRAIN = json.load(open(os.path.join(CONF.PATH.DATA, "ScanRefer_filtered_train.json")))
+# SCANREFER_VAL = json.load(open(os.path.join(CONF.PATH.DATA, "ScanRefer_filtered_val.json")))
 
 # constants
 DC = ScannetDatasetConfig()
@@ -30,9 +30,9 @@ def get_dataloader(args, split, config, augment):
     dataset = ScannetReferenceDataset(
         # scanrefer=scanrefer[split], 
         # scanrefer_all_scene=all_scene_list, 
-        # es_info_file=f"/mnt/petrelfs/lvruiyuan/embodiedscan_infos/embodiedscan_infos_{split}_full.pkl",
-        es_info_file=f"/mnt/petrelfs/lvruiyuan/embodiedscan_infos/embodiedscan_infos_train_full.pkl",
-        vg_raw_data_file=f"/mnt/petrelfs/lvruiyuan/repos/EmbodiedScan/data/embodiedscan_{split}_mini_vg.json",
+        # es_info_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_infos_{split}_full.pkl",
+        es_info_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_infos_train_full.pkl",
+        vg_raw_data_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_{split}_mini_vg.json",
         split=split, 
         num_points=args.num_points, 
         use_height=(not args.no_height),

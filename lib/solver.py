@@ -375,6 +375,8 @@ class Solver():
                     self.log[phase]["backward"].append(time.time() - start)
             
             # eval
+            import pdb
+            pdb.set_trace()
             start = time.time()
             self._eval(data_dict)
             self.log[phase]["eval"].append(time.time() - start)

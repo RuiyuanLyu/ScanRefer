@@ -80,7 +80,7 @@ def rotate_aligned_boxes_along_axis(input_boxes, rot_mat, axis):
 
 class ScannetDatasetConfig(object):
     def __init__(self):
-        self.es_info_file = "/mnt/petrelfs/lvruiyuan/embodiedscan_infos/embodiedscan_infos_val_full.pkl"
+        self.es_info_file = "/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_infos_val_full.pkl"
         self.type2class = np.load(self.es_info_file, allow_pickle=True)["metainfo"]["categories"] # str2int
         self.type2class = {k: v-1 for k,v in self.type2class.items()}
         # self.type2class = {'cabinet':0, 'bed':1, 'chair':2, 'sofa':3, 'table':4, 'door':5,
@@ -92,7 +92,7 @@ class ScannetDatasetConfig(object):
         self.nyu40id2class = self._get_nyu40id2class()
         # self.mean_size_arr = np.load(os.path.join(CONF.PATH.SCANNET, 'meta_data/scannet_reference_means.npz'))['arr_0']
         # # shape: 18, 3
-        self.mean_size_arr = np.load("/mnt/petrelfs/lvruiyuan/embodiedscan_infos/mean_size_array.npy")
+        self.mean_size_arr = np.load("/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/mean_size_array.npy")
         self.num_class = len(self.type2class.keys())
         self.num_heading_bin = 1
         self.num_size_cluster = len(self.type2class.keys())
