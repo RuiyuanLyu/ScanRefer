@@ -74,13 +74,18 @@ def bbox_to_corners(centers, sizes, rot_mat: torch.Tensor) -> torch.Tensor:
     Returns:
         Tensor: Transformed 3D box of shape (N, 8, 3).
     """
-    batch_size, n_proposals = centers.shape[0], centers.shape[1]
     device = centers.device
-    centers = centers.reshape(-1, 3)
-    sizes = sizes.reshape(-1, 3)
-    rot_mat = rot_mat.reshape(-1, 3, 3)
+    use_batch = False
+    if len(centers.shape) == 3:
+        use_batch = True
+        batch_size, n_proposals = centers.shape[0], centers.shape[1]
+        centers = centers.reshape(-1, 3)
+        sizes = sizes.reshape(-1, 3)
+        rot_mat = rot_mat.reshape(-1, 3, 3)
+        
     n_box = centers.shape[0]
-    assert n_box == batch_size * n_proposals
+    if use_batch:
+        assert n_box == batch_size * n_proposals
     centers = centers.unsqueeze(1).repeat(1, 8, 1)  # shape (N, 8, 3)
     half_sizes = sizes.unsqueeze(1).repeat(1, 8, 1) / 2  # shape (N, 8, 3)
     eight_corners_x = torch.tensor([1, 1, 1, 1, -1, -1, -1, -1],
@@ -98,7 +103,10 @@ def bbox_to_corners(centers, sizes, rot_mat: torch.Tensor) -> torch.Tensor:
     # rot_mat: (N, 3, 3), eight_corners: (N, 8, 3)
     rotated_corners = torch.matmul(eight_corners,
                                    rot_mat.transpose(1, 2))  # shape (N, 8, 3)
-    return (centers + rotated_corners).reshape(batch_size, -1, 8, 3)
+    res = centers + rotated_corners
+    if use_batch:
+        res = res.reshape(batch_size, n_proposals, 8, 3)
+    return res
 
 def chamfer_distance(
         src: torch.Tensor,

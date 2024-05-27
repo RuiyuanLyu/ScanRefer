@@ -145,7 +145,7 @@ def compute_box_and_sem_cls_loss(data_dict, config):
         torch.sum(dist2*box_label_mask)/(torch.sum(box_label_mask)+1e-6)
     center_loss = centroid_reg_loss1 + centroid_reg_loss2
     
-    # Compute size loss
+    # Compute size losslib/loss_helper.py
     size_class_label = torch.gather(data_dict['size_class_label'], 1, object_assignment) # select (B,K) from (B,K2)
     criterion_size_class = nn.CrossEntropyLoss(reduction='none')
     size_class_loss = criterion_size_class(data_dict['size_scores'].transpose(2,1), size_class_label) # (B,K)
@@ -173,7 +173,7 @@ def compute_box_and_sem_cls_loss(data_dict, config):
     pred_rot_mat = data_dict['rot_mat']
     pred_corners = bbox_to_corners(pred_center, pred_size, pred_rot_mat)
     target_corners = bbox_to_corners(target_bbox[:, :, :3], target_bbox[:, :, 3:6], target_rot_mat)
-    bbox_cd_loss = chamfer_distance(pred_corners, target_corners, 1.0, 0.0, 'l1', 'mean')
+    bbox_cd_loss, _, _, _ = chamfer_distance(pred_corners, target_corners, 1.0, 0.0, 'l1', 'mean')
     
     # heading_class_label = torch.gather(data_dict['heading_class_label'], 1, object_assignment) # select (B,K) from (B,K2)
     # criterion_heading_class = nn.CrossEntropyLoss(reduction='none')
@@ -213,10 +213,10 @@ def compute_reference_loss(data_dict, config):
     # predicted bbox
     pred_ref = data_dict['cluster_ref'].detach().cpu().numpy() # (B,)
     pred_center = data_dict['center'].detach().cpu().numpy() # (B,K,3)
-    pred_heading_class = torch.argmax(data_dict['heading_scores'], -1) # B,num_proposal
-    pred_heading_residual = torch.gather(data_dict['heading_residuals'], 2, pred_heading_class.unsqueeze(-1)) # B,num_proposal,1
-    pred_heading_class = pred_heading_class.detach().cpu().numpy() # B,num_proposal
-    pred_heading_residual = pred_heading_residual.squeeze(2).detach().cpu().numpy() # B,num_proposal
+    
+    pred_rot_mat = data_dict['rot_mat'].detach().cpu().numpy()
+    import pdb
+    pdb.set_trace()
     pred_size_class = torch.argmax(data_dict['size_scores'], -1) # B,num_proposal
     pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
     pred_size_class = pred_size_class.detach().cpu().numpy()
@@ -224,8 +224,7 @@ def compute_reference_loss(data_dict, config):
 
     # ground truth bbox
     gt_center = data_dict['ref_center_label'].cpu().numpy() # (B,3)
-    gt_heading_class = data_dict['ref_heading_class_label'].cpu().numpy() # B
-    gt_heading_residual = data_dict['ref_heading_residual_label'].cpu().numpy() # B
+    gt_rot_mat = data_dict['ref_rot_mat']
     gt_size_class = data_dict['ref_size_class_label'].cpu().numpy() # B
     gt_size_residual = data_dict['ref_size_residual_label'].cpu().numpy() # B,3
     # convert gt bbox parameters to bbox corners
@@ -294,8 +293,7 @@ def get_loss(data_dict, config, detection=True, reference=True, use_lang_classif
         data_dict['vote_loss'] = vote_loss
         data_dict['objectness_loss'] = objectness_loss
         data_dict['center_loss'] = center_loss
-        data_dict['heading_cls_loss'] = heading_cls_loss
-        data_dict['heading_reg_loss'] = heading_reg_loss
+        data_dict['bbox_cd_loss'] = bbox_cd_loss
         data_dict['size_cls_loss'] = size_cls_loss
         data_dict['size_reg_loss'] = size_reg_loss
         data_dict['sem_cls_loss'] = sem_cls_loss
@@ -311,7 +309,7 @@ def get_loss(data_dict, config, detection=True, reference=True, use_lang_classif
         data_dict['sem_cls_loss'] = torch.zeros(1)[0].cuda()
         data_dict['box_loss'] = torch.zeros(1)[0].cuda()
 
-    if reference:
+    if False: #if reference:    # TODO yesname
         # Reference loss
         ref_loss, _, cluster_labels = compute_reference_loss(data_dict, config)
         data_dict["cluster_labels"] = cluster_labels

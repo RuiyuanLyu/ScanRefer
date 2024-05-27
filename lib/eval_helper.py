@@ -14,6 +14,7 @@ from utils.nn_distance import nn_distance, huber_loss
 from lib.ap_helper import parse_predictions
 from lib.loss import SoftmaxRankingLoss
 from utils.box_util import get_3d_box, get_3d_box_batch, box3d_iou
+from lib.euler_utils import bbox_to_corners
 
 def eval_ref_one_sample(pred_bbox, gt_bbox):
     """ Evaluate one reference prediction
@@ -60,6 +61,8 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
 
     objectness_preds_batch = torch.argmax(data_dict['objectness_scores'], 2).long()
     objectness_labels_batch = data_dict['objectness_label'].long()
+    import pdb
+    pdb.set_trace()
 
     if post_processing:
         _ = parse_predictions(data_dict, post_processing)
@@ -142,6 +145,7 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
         pred_size_class = pred_size_class
         pred_size_residual = pred_size_residual.squeeze(2) # B,num_proposal,3
+        pred_size = config.mean_size_arr[pred_size_class] + pred_size_residual
 
     # store
     data_dict["pred_mask"] = pred_masks
@@ -155,10 +159,12 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
 
     gt_ref = torch.argmax(data_dict["ref_box_label"], 1)
     gt_center = data_dict['center_label'] # (B,MAX_NUM_OBJ,3)
-    gt_heading_class = data_dict['heading_class_label'] # B,K2
-    gt_heading_residual = data_dict['heading_residual_label'] # B,K2
+    gt_rot_mat = data_dict['target_rot_mat']
+    # gt_heading_class = data_dict['heading_class_label'] # B,K2
+    # gt_heading_residual = data_dict['heading_residual_label'] # B,K2
     gt_size_class = data_dict['size_class_label'] # B,K2
     gt_size_residual = data_dict['size_residual_label'] # B,K2,3
+    gt_size = config.mean_size_arr[gt_size_class] + gt_size_residual
 
     ious = []
     multiple = []
@@ -168,21 +174,25 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
     for i in range(pred_ref.shape[0]):
         # compute the iou
         pred_ref_idx, gt_ref_idx = pred_ref[i], gt_ref[i]
-        pred_obb = config.param2obb(
-            pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
-            pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
-            # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
-            # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
-            pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
-            pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
-        )
-        gt_obb = config.param2obb(
-            gt_center[i, gt_ref_idx, 0:3].detach().cpu().numpy(), 
-            gt_heading_class[i, gt_ref_idx].detach().cpu().numpy(), 
-            gt_heading_residual[i, gt_ref_idx].detach().cpu().numpy(),
-            gt_size_class[i, gt_ref_idx].detach().cpu().numpy(), 
-            gt_size_residual[i, gt_ref_idx].detach().cpu().numpy()
-        )
+        pred_obb = bbox_to_corners(pred_center[i, gt_ref_idx, 0:3], pred_size[i, gt_ref_idx], pred_rot_mat[i, gt_ref_idx])
+        gt_obb = bbox_to_corners(gt_center[i, gt_ref_idx, 0:3], gt_size[i, gt_ref_idx], gt_rot_mat[i, gt_ref_idx])
+        # pred_obb = config.param2obb(
+        #     pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
+        #     pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
+        #     # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
+        #     # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
+        #     pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
+        #     pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
+        # )
+        
+        # gt_obb = config.param2obb(
+        #     gt_center[i, gt_ref_idx, 0:3].detach().cpu().numpy(), 
+        #     gt_heading_class[i, gt_ref_idx].detach().cpu().numpy(), 
+        #     gt_heading_residual[i, gt_ref_idx].detach().cpu().numpy(),
+        #     gt_size_class[i, gt_ref_idx].detach().cpu().numpy(), 
+        #     gt_size_residual[i, gt_ref_idx].detach().cpu().numpy()
+        # )
+        raise NotImplementedError
         pred_bbox = get_3d_box(pred_obb[3:6], pred_obb[6], pred_obb[0:3])
         gt_bbox = get_3d_box(gt_obb[3:6], gt_obb[6], gt_obb[0:3])
         iou = eval_ref_one_sample(pred_bbox, gt_bbox)
