@@ -119,7 +119,7 @@ def eval_ref(args):
     seeds = [args.seed] + [2 * i for i in range(args.repeat - 1)]
 
     # evaluate
-    print("evaluating...")
+    print("evaluating reference...")
     score_path = os.path.join(CONF.PATH.OUTPUT, args.folder, "scores.p")
     pred_path = os.path.join(CONF.PATH.OUTPUT, args.folder, "predictions.p")
     gen_flag = (not os.path.exists(score_path)) or args.force or args.repeat > 1
@@ -388,6 +388,8 @@ def eval_det(args):
     AP_CALCULATOR_LIST = [APCalculator(iou_thresh, DC.class2type) for iou_thresh in AP_IOU_THRESHOLDS]
 
     sem_acc = []
+    gt_anno_list = []
+    det_anno_list = []
     for data in tqdm(dataloader):
         for key in data:
             data[key] = data[key].cuda()
@@ -408,8 +410,10 @@ def eval_det(args):
                 post_processing=POST_DICT
             )
 
+        
         sem_acc.append(data["sem_acc"].item())
-
+        gt_anno_list.extend(data["gt_anno_list"])
+        det_anno_list.extend(data["det_anno_list"])
         batch_pred_map_cls = parse_predictions(data, POST_DICT) 
         batch_gt_map_cls = parse_groundtruths(data, POST_DICT) 
         for ap_calculator in AP_CALCULATOR_LIST:
@@ -423,6 +427,9 @@ def eval_det(args):
         metrics_dict = ap_calculator.compute_metrics()
         for key in metrics_dict:
             print("eval %s: %f"%(key, metrics_dict[key]))
+    from lib.grounding_metric import ground_eval
+    ground_eval_results = ground_eval(gt_anno_list, det_anno_list)
+    print(ground_eval_results)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

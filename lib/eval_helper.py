@@ -61,8 +61,8 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
 
     objectness_preds_batch = torch.argmax(data_dict['objectness_scores'], 2).long()
     objectness_labels_batch = data_dict['objectness_label'].long()
-    import pdb
-    pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
 
     if post_processing:
         _ = parse_predictions(data_dict, post_processing)
@@ -145,7 +145,9 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
         pred_size_class = pred_size_class
         pred_size_residual = pred_size_residual.squeeze(2) # B,num_proposal,3
-        pred_size = config.mean_size_arr[pred_size_class] + pred_size_residual
+        mean_size_arr = torch.from_numpy(config.mean_size_arr).to("cuda")
+        # import pdb; pdb.set_trace()
+        pred_size = mean_size_arr[pred_size_class] + pred_size_residual
 
     # store
     data_dict["pred_mask"] = pred_masks
@@ -164,52 +166,85 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
     # gt_heading_residual = data_dict['heading_residual_label'] # B,K2
     gt_size_class = data_dict['size_class_label'] # B,K2
     gt_size_residual = data_dict['size_residual_label'] # B,K2,3
-    gt_size = config.mean_size_arr[gt_size_class] + gt_size_residual
+    gt_size = mean_size_arr[gt_size_class] + gt_size_residual
 
-    ious = []
-    multiple = []
-    others = []
-    pred_bboxes = []
-    gt_bboxes = []
-    for i in range(pred_ref.shape[0]):
-        # compute the iou
-        pred_ref_idx, gt_ref_idx = pred_ref[i], gt_ref[i]
-        pred_obb = bbox_to_corners(pred_center[i, gt_ref_idx, 0:3], pred_size[i, gt_ref_idx], pred_rot_mat[i, gt_ref_idx])
-        gt_obb = bbox_to_corners(gt_center[i, gt_ref_idx, 0:3], gt_size[i, gt_ref_idx], gt_rot_mat[i, gt_ref_idx])
-        # pred_obb = config.param2obb(
-        #     pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
-        #     pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
-        #     # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
-        #     # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
-        #     pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
-        #     pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
-        # )
+    from grounding_metric import ground_eval
+    from copy import deepcopy
+    """
+        det_anno_list: list of dictionaries with keys:
+            'bboxes_3d': (N, 9) or a tuple (center, size, rotmat): (N, 3), (N, 3), (N, 3, 3)
+            'target_scores_3d': (N, )
+        gt_anno_list: list of dictionaries with keys:
+            'gt_bboxes_3d': (M, 9) or a tuple (center, size, rotmat): (M, 3), (M, 3), (M, 3, 3)
+            'is_hard': bool
+            'direct': bool
+            'space': bool
+    """
+    gt_anno_list = []
+    det_anno_list = []
+    for i in range(batch_size):
+        # construct gt_anno_list
+        gt_anno = {}
+        gt_box_tuple = (gt_center[i], gt_size[i], gt_rot_mat[i])
+        gt_anno['gt_bboxes_3d'] = gt_box_tuple
+        gt_anno['is_hard'] = False
+        gt_anno['direct'] = False
+        gt_anno['space'] = False
+        gt_anno_list.append(gt_anno)
+
+        # construct det_anno_list
+        det_anno = {}
+        det_box_tuple = (pred_center[i, :, 0:3], pred_size[i, :], pred_rot_mat[i, :])
+        det_anno['bboxes_3d'] = det_box_tuple
+        det_anno['target_scores_3d'] = data_dict['ref_box_label'][i, :]
+        det_anno_list.append(det_anno)
+    
+    data_dict["gt_anno_list"] = gt_anno_list
+    data_dict["det_anno_list"] = det_anno_list
+    # ious = []
+    # multiple = []
+    # others = []
+    # pred_bboxes = []
+    # gt_bboxes = []
+    # for i in range(pred_ref.shape[0]):
+    #     # compute the iou
+    #     pred_ref_idx, gt_ref_idx = pred_ref[i], gt_ref[i]
+    #     pred_obb = bbox_to_corners(pred_center[i, gt_ref_idx, 0:3], pred_size[i, gt_ref_idx], pred_rot_mat[i, gt_ref_idx])
+    #     gt_obb = bbox_to_corners(gt_center[i, gt_ref_idx, 0:3], gt_size[i, gt_ref_idx], gt_rot_mat[i, gt_ref_idx])
+    #     # pred_obb = config.param2obb(
+    #     #     pred_center[i, pred_ref_idx, 0:3].detach().cpu().numpy(),
+    #     #     pred_rot_mat[i, pred_ref_idx].detach().cpu().numpy(),
+    #     #     # pred_heading_class[i, pred_ref_idx].detach().cpu().numpy(), 
+    #     #     # pred_heading_residual[i, pred_ref_idx].detach().cpu().numpy(),
+    #     #     pred_size_class[i, pred_ref_idx].detach().cpu().numpy(), 
+    #     #     pred_size_residual[i, pred_ref_idx].detach().cpu().numpy()
+    #     # )
         
-        # gt_obb = config.param2obb(
-        #     gt_center[i, gt_ref_idx, 0:3].detach().cpu().numpy(), 
-        #     gt_heading_class[i, gt_ref_idx].detach().cpu().numpy(), 
-        #     gt_heading_residual[i, gt_ref_idx].detach().cpu().numpy(),
-        #     gt_size_class[i, gt_ref_idx].detach().cpu().numpy(), 
-        #     gt_size_residual[i, gt_ref_idx].detach().cpu().numpy()
-        # )
-        raise NotImplementedError
-        pred_bbox = get_3d_box(pred_obb[3:6], pred_obb[6], pred_obb[0:3])
-        gt_bbox = get_3d_box(gt_obb[3:6], gt_obb[6], gt_obb[0:3])
-        iou = eval_ref_one_sample(pred_bbox, gt_bbox)
-        ious.append(iou)
+    #     # gt_obb = config.param2obb(
+    #     #     gt_center[i, gt_ref_idx, 0:3].detach().cpu().numpy(), 
+    #     #     gt_heading_class[i, gt_ref_idx].detach().cpu().numpy(), 
+    #     #     gt_heading_residual[i, gt_ref_idx].detach().cpu().numpy(),
+    #     #     gt_size_class[i, gt_ref_idx].detach().cpu().numpy(), 
+    #     #     gt_size_residual[i, gt_ref_idx].detach().cpu().numpy()
+    #     # )
+    #     raise NotImplementedError
+    #     pred_bbox = get_3d_box(pred_obb[3:6], pred_obb[6], pred_obb[0:3])
+    #     gt_bbox = get_3d_box(gt_obb[3:6], gt_obb[6], gt_obb[0:3])
+    #     iou = eval_ref_one_sample(pred_bbox, gt_bbox)
+    #     ious.append(iou)
 
-        # NOTE: get_3d_box() will return problematic bboxes
-        pred_bbox = construct_bbox_corners(pred_obb[0:3], pred_obb[3:6])
-        gt_bbox = construct_bbox_corners(gt_obb[0:3], gt_obb[3:6])
-        pred_bboxes.append(pred_bbox)
-        gt_bboxes.append(gt_bbox)
+    #     # NOTE: get_3d_box() will return problematic bboxes
+    #     pred_bbox = construct_bbox_corners(pred_obb[0:3], pred_obb[3:6])
+    #     gt_bbox = construct_bbox_corners(gt_obb[0:3], gt_obb[3:6])
+    #     pred_bboxes.append(pred_bbox)
+    #     gt_bboxes.append(gt_bbox)
 
-        # construct the multiple mask
-        multiple.append(data_dict["unique_multiple"][i].item())
+    #     # construct the multiple mask
+    #     multiple.append(data_dict["unique_multiple"][i].item())
 
-        # construct the others mask
-        flag = 1 if data_dict["object_cat"][i] == 17 else 0
-        others.append(flag)
+    #     # construct the others mask
+    #     flag = 1 if data_dict["object_cat"][i] == 17 else 0
+    #     others.append(flag)
 
     # lang
     if reference and use_lang_classifier:
@@ -218,13 +253,13 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
         data_dict["lang_acc"] = torch.zeros(1)[0].cuda()
 
     # store
-    data_dict["ref_iou"] = ious
-    data_dict["ref_iou_rate_0.25"] = np.array(ious)[np.array(ious) >= 0.25].shape[0] / np.array(ious).shape[0]
-    data_dict["ref_iou_rate_0.5"] = np.array(ious)[np.array(ious) >= 0.5].shape[0] / np.array(ious).shape[0]
-    data_dict["ref_multiple_mask"] = multiple
-    data_dict["ref_others_mask"] = others
-    data_dict["pred_bboxes"] = pred_bboxes
-    data_dict["gt_bboxes"] = gt_bboxes
+    # data_dict["ref_iou"] = ious
+    # data_dict["ref_iou_rate_0.25"] = np.array(ious)[np.array(ious) >= 0.25].shape[0] / np.array(ious).shape[0]
+    # data_dict["ref_iou_rate_0.5"] = np.array(ious)[np.array(ious) >= 0.5].shape[0] / np.array(ious).shape[0]
+    # data_dict["ref_multiple_mask"] = multiple
+    # data_dict["ref_others_mask"] = others
+    # data_dict["pred_bboxes"] = pred_bboxes
+    # data_dict["gt_bboxes"] = gt_bboxes
 
     # --------------------------------------------
     # Some other statistics
@@ -236,5 +271,6 @@ def get_eval(data_dict, config, reference, use_lang_classifier=False, use_oracle
     sem_cls_pred = data_dict['sem_cls_scores'].argmax(-1) # (B,K)
     sem_match = (sem_cls_label == sem_cls_pred).float()
     data_dict["sem_acc"] = (sem_match * data_dict["pred_mask"]).sum() / data_dict["pred_mask"].sum()
+
 
     return data_dict

@@ -30,6 +30,7 @@ ITER_REPORT_TEMPLATE = """
 [loss] train_vote_loss: {train_vote_loss}
 [loss] train_box_loss: {train_box_loss}
 [loss] train_lang_acc: {train_lang_acc}
+[eval] grounding_eval: {}
 [sco.] train_ref_acc: {train_ref_acc}
 [sco.] train_obj_acc: {train_obj_acc}
 [sco.] train_pos_ratio: {train_pos_ratio}, train_neg_ratio: {train_neg_ratio}
@@ -239,7 +240,8 @@ class Solver():
             "pos_ratio": [],
             "neg_ratio": [],
             "iou_rate_0.25": [],
-            "iou_rate_0.5": []
+            "iou_rate_0.5": [],
+            "ground_eval_results": []
         }
 
     def _set_phase(self, phase):
@@ -292,8 +294,16 @@ class Solver():
         self._running_log["obj_acc"] = data_dict["obj_acc"].item()
         self._running_log["pos_ratio"] = data_dict["pos_ratio"].item()
         self._running_log["neg_ratio"] = data_dict["neg_ratio"].item()
-        self._running_log["iou_rate_0.25"] = np.mean(data_dict["ref_iou_rate_0.25"])
-        self._running_log["iou_rate_0.5"] = np.mean(data_dict["ref_iou_rate_0.5"])
+        # self._running_log["iou_rate_0.25"] = np.mean(data_dict["ref_iou_rate_0.25"])
+        # self._running_log["iou_rate_0.5"] = np.mean(data_dict["ref_iou_rate_0.5"])
+        gt_anno_list = (data_dict["gt_anno_list"])
+        det_anno_list = (data_dict["det_anno_list"])
+        from lib.grounding_metric import ground_eval
+        ground_eval_results = ground_eval(gt_anno_list, det_anno_list)
+        # print(ground_eval_results)
+        self._running_log["ground_eval_results"] = ground_eval_results
+        self._running_log["gt_anno_list"] = gt_anno_list
+        self._running_log["det_anno_list"] = det_anno_list
 
     def _feed(self, dataloader, phase, epoch_id):
         # switch mode
@@ -355,7 +365,8 @@ class Solver():
                 "pos_ratio": 0,
                 "neg_ratio": 0,
                 "iou_rate_0.25": 0,
-                "iou_rate_0.5": 0
+                "iou_rate_0.5": 0,
+                "ground_eval_results": None,
             }
 
             # load
@@ -375,8 +386,8 @@ class Solver():
                     self.log[phase]["backward"].append(time.time() - start)
             
             # eval
-            import pdb
-            pdb.set_trace()
+            # import pdb
+            # pdb.set_trace()
             start = time.time()
             self._eval(data_dict)
             self.log[phase]["eval"].append(time.time() - start)
@@ -396,6 +407,7 @@ class Solver():
             self.log[phase]["neg_ratio"].append(self._running_log["neg_ratio"])
             self.log[phase]["iou_rate_0.25"].append(self._running_log["iou_rate_0.25"])
             self.log[phase]["iou_rate_0.5"].append(self._running_log["iou_rate_0.5"])                
+            self.log[phase]["ground_eval_results"].append(self._running_log["ground_eval_results"])
 
             # report
             if phase == "train":
