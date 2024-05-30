@@ -12,9 +12,9 @@ import os
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 from utils.nn_distance import nn_distance, huber_loss
 from lib.ap_helper import parse_predictions
-from lib.loss import SoftmaxRankingLoss
+from lib.loss import SoftmaxRankingLoss, SigmoidRankingLoss
 from utils.box_util import get_3d_box, get_3d_box_batch, box3d_iou, box3d_iou_batch
-from lib.euler_utils import bbox_to_corners, chamfer_distance
+from lib.euler_utils import bbox_to_corners, chamfer_distance, axis_aligned_bbox_overlaps_3d
 
 FAR_THRESHOLD = 0.6
 NEAR_THRESHOLD = 0.3
@@ -164,9 +164,8 @@ def compute_box_and_sem_cls_loss(data_dict, config):
     size_residual_normalized_loss = torch.sum(size_residual_normalized_loss*objectness_label)/(torch.sum(objectness_label)+1e-6)
 
     pred_size_class = torch.argmax(data_dict['size_scores'], -1)
-    pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3))
-    pred_size_residual = pred_size_residual.squeeze(2)
-    pred_size = (1 + pred_size_residual) * mean_size_label  # TODO yesname: Maybe not correct here.
+    pred_size = torch.gather(data_dict['size_calc'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3))
+    pred_size = pred_size.squeeze(2)
     # Compute heading loss      # TODO yesname
     target_rot_mat = torch.gather(data_dict['target_rot_mat'], 1, object_assignment.unsqueeze(-1).unsqueeze(-1).repeat(1,1,3,3))   # B, K, 3x3
     target_bbox = torch.gather(data_dict['target_bbox'], 1, object_assignment.unsqueeze(-1).repeat(1,1,6))  # B, K, 6
@@ -211,49 +210,54 @@ def compute_reference_loss(data_dict, config):
     cluster_preds = data_dict["cluster_ref"] # (B, num_proposal)
 
     # predicted bbox
-    pred_ref = data_dict['cluster_ref'].detach().cpu().numpy() # (B,)
-    pred_center = data_dict['center'].detach().cpu().numpy() # (B,K,3)
+    pred_ref = data_dict['cluster_ref'].detach() # (B,)
+    pred_center = data_dict['center'].detach() # (B,K,3)
     
-    pred_rot_mat = data_dict['rot_mat'].detach().cpu().numpy()
-    import pdb
-    pdb.set_trace()
+    pred_rot_mat = data_dict['rot_mat'].detach()
     pred_size_class = torch.argmax(data_dict['size_scores'], -1) # B,num_proposal
     pred_size_residual = torch.gather(data_dict['size_residuals'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
-    pred_size_class = pred_size_class.detach().cpu().numpy()
-    pred_size_residual = pred_size_residual.squeeze(2).detach().cpu().numpy() # B,num_proposal,3
+    pred_size = torch.gather(data_dict['size_calc'], 2, pred_size_class.unsqueeze(-1).unsqueeze(-1).repeat(1,1,1,3)) # B,num_proposal,1,3
+    pred_size = pred_size.squeeze(2)
+    pred_size_class = pred_size_class.detach()
+    pred_size_residual = pred_size_residual.squeeze(2).detach() # B,num_proposal,3
 
     # ground truth bbox
-    gt_center = data_dict['ref_center_label'].cpu().numpy() # (B,3)
-    gt_rot_mat = data_dict['ref_rot_mat']
-    gt_size_class = data_dict['ref_size_class_label'].cpu().numpy() # B
-    gt_size_residual = data_dict['ref_size_residual_label'].cpu().numpy() # B,3
+    gt_center = data_dict['center_label'].detach() # (B,3)
+    gt_rot_mat = data_dict['target_rot_mat'].detach()
+    gt_boxes = data_dict['target_bbox'].detach()
+    gt_size = gt_boxes[:, 3:6].detach()
+    gt_ref = data_dict['ref_box_label'].detach()
+    
     # convert gt bbox parameters to bbox corners
-    gt_obb_batch = config.param2obb_batch(gt_center[:, 0:3], gt_heading_class, gt_heading_residual,
-                    gt_size_class, gt_size_residual)
-    gt_bbox_batch = get_3d_box_batch(gt_obb_batch[:, 3:6], gt_obb_batch[:, 6], gt_obb_batch[:, 0:3])
+    # gt_corners = bbox_to_corners(gt_center, gt_size, gt_rot_mat)
+    # gt_obb_batch = config.param2obb_batch(gt_center[:, 0:3], gt_heading_class, gt_heading_residual,
+    #                 gt_size_class, gt_size_residual)
+    # gt_bbox_batch = get_3d_box_batch(gt_obb_batch[:, 3:6], gt_obb_batch[:, 6], gt_obb_batch[:, 0:3])
 
     # compute the iou score for all predictd positive ref
     batch_size, num_proposals = cluster_preds.shape
     labels = np.zeros((batch_size, num_proposals))
     for i in range(pred_ref.shape[0]):
         # convert the bbox parameters to bbox corners
-        pred_obb_batch = config.param2obb_batch(pred_center[i, :, 0:3], pred_heading_class[i], pred_heading_residual[i],
-                    pred_size_class[i], pred_size_residual[i])
-        pred_bbox_batch = get_3d_box_batch(pred_obb_batch[:, 3:6], pred_obb_batch[:, 6], pred_obb_batch[:, 0:3])
-        ious = box3d_iou_batch(pred_bbox_batch, np.tile(gt_bbox_batch[i], (num_proposals, 1, 1)))
-        labels[i, ious.argmax()] = 1 # treat the bbox with highest iou score as the gt
+        pred_boxes = torch.concat([pred_center[i], pred_size[i]], dim=1)
+        gt_boxes_single = gt_boxes[i, gt_ref[i]]
+        num_gts = gt_boxes_single.shape[0]
+        # pred_corners = bbox_to_corners(pred_center[i], pred_size[i], pred_rot_mat[i])
+        ious = axis_aligned_bbox_overlaps_3d(pred_boxes, gt_boxes_single[:, :6])
+        for j in range(num_gts):
+            labels[i, ious[:, j].argmax()] = 1 # treat the bbox with highest iou score as the gt
 
     cluster_labels = torch.FloatTensor(labels).cuda()
 
     # reference loss
-    criterion = SoftmaxRankingLoss()
+    criterion = SigmoidRankingLoss()
     loss = criterion(cluster_preds, cluster_labels.float().clone())
 
     return loss, cluster_preds, cluster_labels
 
 def compute_lang_classification_loss(data_dict):
-    criterion = torch.nn.CrossEntropyLoss()
-    loss = criterion(data_dict["lang_scores"], data_dict["object_cat"])
+    criterion = torch.nn.BCEWithLogitsLoss()
+    loss = criterion(data_dict["lang_scores"], data_dict["ref_class_label"])
 
     return loss
 
@@ -309,7 +313,7 @@ def get_loss(data_dict, config, detection=True, reference=True, use_lang_classif
         data_dict['sem_cls_loss'] = torch.zeros(1)[0].cuda()
         data_dict['box_loss'] = torch.zeros(1)[0].cuda()
 
-    if False: #if reference:    # TODO yesname
+    if reference:    # TODO yesname
         # Reference loss
         ref_loss, _, cluster_labels = compute_reference_loss(data_dict, config)
         data_dict["cluster_labels"] = cluster_labels

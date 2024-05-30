@@ -83,12 +83,14 @@ class ScannetReferenceDataset(Dataset):
     def __getitem__(self, idx):
         start = time.time()
         scene_id = self.scanrefer[idx]["scene_id"]
-        object_id = int(self.scanrefer[idx]["object_id"])
-        object_name = " ".join(self.scanrefer[idx]["object_name"].split("_"))
-        ann_id = self.scanrefer[idx]["ann_id"]
+
+        object_id = self.scanrefer[idx]["object_id"]
+        # object_name = " ".join(self.scanrefer[idx]["object_name"].split("_"))
+        # ann_id = self.scanrefer[idx]["ann_id"]
+        
         
         # get language features
-        lang_feat = self.lang[scene_id][str(object_id)][ann_id]
+        lang_feat = self.lang[idx]
         lang_len = len(self.scanrefer[idx]["token"])
         lang_len = lang_len if lang_len <= CONF.TRAIN.MAX_DES_LEN else CONF.TRAIN.MAX_DES_LEN
         # lang_len = len(self.scanrefer[idx]["token"]) + 2
@@ -141,12 +143,14 @@ class ScannetReferenceDataset(Dataset):
         size_classes = np.zeros((MAX_NUM_OBJ,))
         size_residuals = np.zeros((MAX_NUM_OBJ, 3))
         ref_box_label = np.zeros(MAX_NUM_OBJ) # bbox label for reference target
-        ref_center_label = np.zeros(3) # bbox center for reference target
-        ref_heading_class_label = 0
-        ref_heading_residual_label = 0
-        ref_size_class_label = 0
-        ref_size_residual_label = np.zeros(3) # bbox size residual for reference target
-        ref_rot_mat = np.zeros((3,3))
+        ref_class_label = np.zeros(DC.num_size_cluster)
+        # ref_center_label = np.zeros(3) # bbox center for reference target
+        # ref_heading_class_label = 0
+        # ref_heading_residual_label = 0
+        # ref_size_class_label = 0
+        # ref_size_residual_label = np.zeros(3) # bbox size residual for reference target
+        # ref_rot_mat = np.zeros((3,3))
+        # ref_box_size = np.zeros(3)
         
         target_bboxes_rot_mat = None    # If target bboxes rot mat is not None, then the target bbox euler angle is not trusted
 
@@ -237,16 +241,17 @@ class ScannetReferenceDataset(Dataset):
             # construct the reference target label for each bbox
             if target_bboxes_rot_mat is None:
                 target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
-            ref_box_label = np.zeros(MAX_NUM_OBJ)
             for i, gt_id in enumerate(instance_bboxes[:num_bbox,-1]):
-                if gt_id == object_id:
+                if gt_id in object_id:
                     ref_box_label[i] = 1
-                    ref_center_label = target_bboxes[i, 0:3]
-                    ref_heading_class_label = angle_classes[i]
-                    ref_heading_residual_label = angle_residuals[i]
-                    ref_size_class_label = size_classes[i]
-                    ref_size_residual_label = size_residuals[i]
-                    ref_rot_mat = target_bboxes_rot_mat[i]
+                    ref_class_label[DC.nyu40id2class[int(instance_bboxes[i,-2])]] = 1
+                    # ref_center_label = target_bboxes[i, 0:3]
+                    # ref_box_size = target_bboxes[i, 3:6]
+                    # ref_heading_class_label = angle_classes[i]
+                    # ref_heading_residual_label = angle_residuals[i]
+                    # ref_size_class_label = size_classes[i]
+                    # ref_size_residual_label = size_residuals[i]
+                    # ref_rot_mat = target_bboxes_rot_mat[i]
         else:
             num_bbox = 1
             point_votes = np.zeros([self.num_points, 9]) # make 3 votes identical 
@@ -257,14 +262,15 @@ class ScannetReferenceDataset(Dataset):
             target_bboxes_semcls[0:num_bbox] = [DC.nyu40id2class[int(x)] for x in instance_bboxes[:,-2][0:num_bbox]]
         except KeyError:
             pass
-        if object_name in self.raw2label:
-            object_cat = self.raw2label[object_name]
-        else:
-            print(f"unknown object name {object_name}")
-            object_cat = UNK_CLASS_ID
+        # if object_name in self.raw2label:
+        #     object_cat = self.raw2label[object_name]
+        # else:
+        #     print(f"unknown object name {object_name}")
+        #     object_cat = UNK_CLASS_ID
         
         if target_bboxes_rot_mat is None:
             target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
+            
 
         data_dict = {}
         data_dict["point_clouds"] = point_cloud.astype(np.float32) # point cloud data including features
@@ -284,19 +290,21 @@ class ScannetReferenceDataset(Dataset):
         data_dict["vote_label_mask"] = point_votes_mask.astype(np.int64)
         data_dict["scan_idx"] = np.array(idx).astype(np.int64)
         data_dict["pcl_color"] = pcl_color
-        data_dict["ref_box_label"] = ref_box_label.astype(np.int64) # 0/1 reference labels for each object bbox
-        data_dict["ref_box_label"] = ref_box_label.astype(np.int64) # 0/1 reference labels for each object bbox
-        data_dict["ref_center_label"] = ref_center_label.astype(np.float32)
-        data_dict["ref_heading_class_label"] = np.array(int(ref_heading_class_label)).astype(np.int64)
-        data_dict["ref_heading_residual_label"] = np.array(int(ref_heading_residual_label)).astype(np.int64)
-        data_dict["ref_rot_mat"] = ref_rot_mat.astype(np.float32)
-        data_dict["ref_size_class_label"] = np.array(int(ref_size_class_label)).astype(np.int64)
-        data_dict["ref_size_residual_label"] = ref_size_residual_label.astype(np.float32)
-        data_dict["object_id"] = np.array(int(object_id)).astype(np.int64)
-        data_dict["ann_id"] = np.array(int(ann_id)).astype(np.int64)
-        data_dict["object_cat"] = np.array(object_cat).astype(np.int64)
-        data_dict["unique_multiple"] = np.array(self.unique_multiple_lookup[scene_id][str(object_id)][ann_id]).astype(np.int64)
+        data_dict["ref_box_label"] = ref_box_label.astype(bool) # 0/1 reference labels for each object bbox
+        data_dict['ref_class_label'] = ref_class_label.astype(np.float32)
+        # data_dict["ref_center_label"] = ref_center_label.astype(np.float32)
+        # data_dict["ref_heading_class_label"] = np.array(int(ref_heading_class_label)).astype(np.int64)
+        # data_dict["ref_heading_residual_label"] = np.array(int(ref_heading_residual_label)).astype(np.int64)
+        # data_dict["ref_size_label"] = ref_box_size.astype(np.float32)
+        # data_dict["ref_rot_mat"] = ref_rot_mat.astype(np.float32)
+        # data_dict["ref_size_class_label"] = np.array(int(ref_size_class_label)).astype(np.int64)
+        # data_dict["ref_size_residual_label"] = ref_size_residual_label.astype(np.float32)
+        # data_dict["object_id"] = np.array(int(object_id)).astype(np.int64)
+        # data_dict["ann_id"] = np.array(int(ann_id)).astype(np.int64)
+        # data_dict["object_cat"] = np.array(object_cat).astype(np.int64)
+        # data_dict["unique_multiple"] = np.array(self.unique_multiple_lookup[scene_id][str(object_id)][ann_id]).astype(np.int64)
         data_dict["pcl_color"] = pcl_color
+        data_dict["sub_class"] = self.scanrefer[idx]["sub_class"]
         data_dict["load_time"] = time.time() - start
 
         return data_dict
@@ -307,20 +315,25 @@ class ScannetReferenceDataset(Dataset):
         tmp_save = {}
         # tmp_save[scene_id][object_id] records num annos
         for i, d in enumerate(data):
+            # if i > 100:
+            #     break
             out_dict = {}
             scene_id = to_scene_id(d["scan_id"])
             out_dict["scene_id"] = NUM2RAW_3RSCAN.get(scene_id, scene_id) # a hack here. The pcd files are saved differently. 3rscan are in raw, scannet and mp3d are in num.
             tmp_save[d["scan_id"]] = tmp_save.get(d["scan_id"], {})
-            target_id = d['target_id']
-            target_id = target_id[0] if isinstance(target_id, list) else target_id
-            if not isinstance(target_id, int):
+            if len(d['target_id']) <= 0:
                 continue
-            out_dict["object_id"] = str(target_id)
-            tmp_save[d["scan_id"]][out_dict["object_id"]] = tmp_save[d["scan_id"]].get(out_dict["object_id"], -1) + 1
-            out_dict["object_name"] = d["target"][0] if isinstance(d["target"], list) else d["target"]
-            out_dict["ann_id"] = str(tmp_save[d["scan_id"]][out_dict["object_id"]])
+            target_id = d['target_id']
+            # target_id = target_id[0] if isinstance(target_id, list) else target_id
+            # if not isinstance(target_id, int):
+            #     continue
+            out_dict["object_id"] = target_id
+            # tmp_save[d["scan_id"]][out_dict["object_id"]] = tmp_save[d["scan_id"]].get(out_dict["object_id"], -1) + 1
+            # out_dict["object_name"] = d["target"][0] if isinstance(d["target"], list) else d["target"]
+            out_dict["ann_id"] = i
             out_dict["description"] = d["text"].lower()
             out_dict["token"] = tokenize_text(d["text"].lower())
+            out_dict["sub_class"] = d.get("sub_class", "other")
             ret.append(out_dict)
         del tmp_save
         return ret
@@ -350,77 +363,65 @@ class ScannetReferenceDataset(Dataset):
         raw2label = {k: v-count_type_from_zero for k, v in raw2label.items()}
         return raw2label
 
-    def _get_unique_multiple_lookup(self):
-        all_sem_labels = {}
-        cache = {}
-        for data in self.scanrefer:
-            scene_id = data["scene_id"]
-            object_id = data["object_id"]
-            object_name = " ".join(data["object_name"].split("_"))
-            ann_id = data["ann_id"]
+    # def _get_unique_multiple_lookup(self):
+    #     all_sem_labels = {}
+    #     cache = {}
+    #     for data in self.scanrefer:
+    #         scene_id = data["scene_id"]
+    #         object_id = data["object_id"]
+    #         object_name = " ".join(data["object_name"].split("_"))
+    #         ann_id = data["ann_id"]
 
-            if scene_id not in all_sem_labels:
-                all_sem_labels[scene_id] = []
+    #         if scene_id not in all_sem_labels:
+    #             all_sem_labels[scene_id] = []
 
-            if scene_id not in cache:
-                cache[scene_id] = {}
+    #         if scene_id not in cache:
+    #             cache[scene_id] = {}
 
-            if object_id not in cache[scene_id]:
-                cache[scene_id][object_id] = {}
-                try:
-                    all_sem_labels[scene_id].append(self.raw2label[object_name])
-                except KeyError:
-                    all_sem_labels[scene_id].append(UNK_CLASS_ID)
+    #         if object_id not in cache[scene_id]:
+    #             cache[scene_id][object_id] = {}
+    #             try:
+    #                 all_sem_labels[scene_id].append(self.raw2label[object_name])
+    #             except KeyError:
+    #                 all_sem_labels[scene_id].append(UNK_CLASS_ID)
 
-        # convert to numpy array
-        all_sem_labels = {scene_id: np.array(all_sem_labels[scene_id]) for scene_id in all_sem_labels.keys()}
+    #     # convert to numpy array
+    #     all_sem_labels = {scene_id: np.array(all_sem_labels[scene_id]) for scene_id in all_sem_labels.keys()}
 
-        unique_multiple_lookup = {}
-        for data in self.scanrefer:
-            scene_id = data["scene_id"]
-            object_id = data["object_id"]
-            object_name = " ".join(data["object_name"].split("_"))
-            ann_id = data["ann_id"]
+    #     unique_multiple_lookup = {}
+    #     for data in self.scanrefer:
+    #         scene_id = data["scene_id"]
+    #         object_id = data["object_id"]
+    #         object_name = " ".join(data["object_name"].split("_"))
+    #         ann_id = data["ann_id"]
 
-            try:
-                sem_label = self.raw2label[object_name]
-            except KeyError:
-                sem_label = UNK_CLASS_ID
+    #         try:
+    #             sem_label = self.raw2label[object_name]
+    #         except KeyError:
+    #             sem_label = UNK_CLASS_ID
 
-            unique_multiple = 0 if (all_sem_labels[scene_id] == sem_label).sum() == 1 else 1
+    #         unique_multiple = 0 if (all_sem_labels[scene_id] == sem_label).sum() == 1 else 1
 
-            # store
-            if scene_id not in unique_multiple_lookup:
-                unique_multiple_lookup[scene_id] = {}
+    #         # store
+    #         if scene_id not in unique_multiple_lookup:
+    #             unique_multiple_lookup[scene_id] = {}
 
-            if object_id not in unique_multiple_lookup[scene_id]:
-                unique_multiple_lookup[scene_id][object_id] = {}
+    #         if object_id not in unique_multiple_lookup[scene_id]:
+    #             unique_multiple_lookup[scene_id][object_id] = {}
 
-            if ann_id not in unique_multiple_lookup[scene_id][object_id]:
-                unique_multiple_lookup[scene_id][object_id][ann_id] = None
+    #         if ann_id not in unique_multiple_lookup[scene_id][object_id]:
+    #             unique_multiple_lookup[scene_id][object_id][ann_id] = None
 
-            unique_multiple_lookup[scene_id][object_id][ann_id] = unique_multiple
+    #         unique_multiple_lookup[scene_id][object_id][ann_id] = unique_multiple
 
-        return unique_multiple_lookup
+    #     return unique_multiple_lookup
 
     def _tranform_des(self):
         with open(GLOVE_PICKLE, "rb") as f:
             glove = pickle.load(f)
 
-        lang = {}
+        lang = []
         for data in self.scanrefer:
-            scene_id = data["scene_id"]
-            object_id = data["object_id"]
-            ann_id = data["ann_id"]
-
-            if scene_id not in lang:
-                lang[scene_id] = {}
-
-            if object_id not in lang[scene_id]:
-                lang[scene_id][object_id] = {}
-
-            if ann_id not in lang[scene_id][object_id]:
-                lang[scene_id][object_id][ann_id] = {}
 
             # tokenize the description
             tokens = data["token"]
@@ -436,7 +437,7 @@ class ScannetReferenceDataset(Dataset):
                         embeddings[token_id] = glove["unk"]
 
             # store
-            lang[scene_id][object_id][ann_id] = embeddings
+            lang.append(embeddings)
 
         return lang
 
@@ -495,7 +496,7 @@ class ScannetReferenceDataset(Dataset):
 
         # # store
         # self.raw2nyuid = raw2nyuid
-        self.unique_multiple_lookup = self._get_unique_multiple_lookup()
+        # self.unique_multiple_lookup = self._get_unique_multiple_lookup()
         print(f"successfully loaded {len(self.scene_data.items())} for {self.split} set")
 
     def _translate(self, point_set, bbox):

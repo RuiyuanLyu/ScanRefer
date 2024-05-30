@@ -133,6 +133,7 @@ class ProposalModule(nn.Module):
         data_dict['size_scores'] = size_scores
         data_dict['size_residuals_normalized'] = size_residuals_normalized
         data_dict['size_residuals'] = size_residuals_normalized * torch.from_numpy(mean_size_arr.astype(np.float32)).cuda().unsqueeze(0).unsqueeze(0)
+        data_dict['size_calc'] = (size_residuals_normalized + 1) * torch.from_numpy(mean_size_arr.astype(np.float32)).cuda().unsqueeze(0).unsqueeze(0)
         data_dict['sem_cls_scores'] = sem_cls_scores
 
         return data_dict

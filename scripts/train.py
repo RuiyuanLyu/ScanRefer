@@ -32,7 +32,7 @@ def get_dataloader(args, split, config, augment):
         # scanrefer_all_scene=all_scene_list, 
         # es_info_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_infos_{split}_full.pkl",
         es_info_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_infos_train_full.pkl",
-        vg_raw_data_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/embodiedscan_infos/embodiedscan_{split}_mini_vg.json",
+        vg_raw_data_file=f"/mnt/hwfile/OpenRobotLab/lvruiyuan/es_gen_text/vg_full/VG_{split}_10Percent_flattened_token_positive.json",
         split=split, 
         num_points=args.num_points, 
         use_height=(not args.no_height),
@@ -240,8 +240,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--tag", type=str, help="tag for the training, e.g. cuda_wl", default="")
     parser.add_argument("--gpu", type=str, help="gpu", default="0")
-    parser.add_argument("--batch_size", type=int, help="batch size", default=14)
-    parser.add_argument("--epoch", type=int, help="number of epochs", default=50)
+    parser.add_argument("--batch_size", type=int, help="batch size", default=32)
+    parser.add_argument("--epoch", type=int, help="number of epochs", default=20)
     parser.add_argument("--verbose", type=int, help="iterations of showing verbose", default=10)
     parser.add_argument("--val_step", type=int, help="iterations of validating", default=5000)
     parser.add_argument("--lr", type=float, help="learning rate", default=1e-3)
@@ -264,7 +264,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # setting
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
     # reproducibility

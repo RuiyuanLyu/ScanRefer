@@ -17,3 +17,19 @@ class SoftmaxRankingLoss(nn.Module):
         loss = -torch.sum(torch.log(probs + 1e-8) * targets, dim=1).mean()
 
         return loss
+
+class SigmoidRankingLoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, inputs, targets):
+        # input check
+        assert inputs.shape == targets.shape
+        
+        # compute the probabilities
+        probs = torch.sigmoid(inputs)
+
+        # reduction
+        loss = -torch.sum(torch.log(probs + 1e-8) * targets, dim=1).mean()
+
+        return loss

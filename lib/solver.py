@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import StepLR, MultiStepLR
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 from lib.config import CONF
 from lib.loss_helper import get_loss
-from lib.eval_helper import get_eval
+from lib.eval_helper import get_eval, inference
 from utils.eta import decode_eta
 from lib.pointnet2.pytorch_utils import BNMomentumScheduler
 
@@ -278,24 +278,13 @@ class Solver():
         self._running_log["box_loss"] = data_dict["box_loss"]
         self._running_log["loss"] = data_dict["loss"]
 
-    def _eval(self, data_dict):
-        data_dict = get_eval(
-            data_dict=data_dict,
-            config=self.config,
-            reference=self.reference,
-            use_lang_classifier=self.use_lang_classifier
-        )
-
-        # dump
-        self._running_log["lang_acc"] = data_dict["lang_acc"].item()
-        self._running_log["ref_acc"] = np.mean(data_dict["ref_acc"])
-        self._running_log["obj_acc"] = data_dict["obj_acc"].item()
-        self._running_log["pos_ratio"] = data_dict["pos_ratio"].item()
-        self._running_log["neg_ratio"] = data_dict["neg_ratio"].item()
-        self._running_log["iou_rate_0.25"] = np.mean(data_dict["ref_iou_rate_0.25"])
-        self._running_log["iou_rate_0.5"] = np.mean(data_dict["ref_iou_rate_0.5"])
+    def _eval(self, data_dict, pred_list, gt_list):
+        metric = get_eval(pred_list, gt_list, self.log_fout)
+        for key in metric:
+            self._running_log[key] = metric[key]
 
     def _feed(self, dataloader, phase, epoch_id):
+        print('phase:', phase)
         # switch mode
         self._set_phase(phase)
 
@@ -303,40 +292,43 @@ class Solver():
         self._reset_log(phase)
 
         # change dataloader
-        dataloader = dataloader if phase == "train" else tqdm(dataloader)
+        dataloader = tqdm(dataloader) if phase == "train" else tqdm(dataloader)
 
+        pred_list = []
+        gt_list = []
         for data_dict in dataloader:
             # move to cuda
             for key in data_dict:
-                data_dict[key] = data_dict[key].cuda()
+                if key != 'sub_class':
+                    data_dict[key] = data_dict[key].cuda()
             # import pdb; pdb.set_trace()
             # es_mod
-            point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])
-            lang_feat = data_dict["lang_feat"] # torch.float32([14, 126, 300])
-            lang_len = data_dict["lang_len"] # torch.int64([14])
-            center_label = data_dict["center_label"] # torch.float32([14, 128, 3])
-            heading_class_label = data_dict["heading_class_label"] # torch.int64([14, 128])
-            heading_residual_label = data_dict["heading_residual_label"] # torch.int64([14, 128])
-            size_class_label = data_dict["size_class_label"] # torch.int64([14, 128])
-            size_residual_label = data_dict["size_residual_label"] # torch.float32([14, 128, 3])
-            num_bbox = data_dict["num_bbox"] # torch.int64([14])
-            sem_cls_label = data_dict["sem_cls_label"] # torch.int64([14, 128])
-            box_label_mask = data_dict["box_label_mask"] # torch.float32([14, 128])
-            vote_label = data_dict["vote_label"] # torch.float32([14, 40000, 9])
-            vote_label_mask = data_dict["vote_label_mask"] # torch.int64([14, 40000])
-            scan_idx = data_dict["scan_idx"] # torch.int64([14])
-            pcl_color = data_dict["pcl_color"] # torch.float32([14, 40000, 3]), range -1 to 1
-            ref_box_label = data_dict["ref_box_label"] # torch.int64([14, 128])
-            ref_center_label = data_dict["ref_center_label"] # torch.float32([14, 3])
-            ref_heading_class_label = data_dict["ref_heading_class_label"] # torch.int64([14])
-            ref_heading_residual_label = data_dict["ref_heading_residual_label"] # torch.int64([14])
-            ref_size_class_label = data_dict["ref_size_class_label"] # torch.int64([14])
-            ref_size_residual_label = data_dict["ref_size_residual_label"] # torch.float32([14, 3])
-            object_id = data_dict["object_id"] # torch.int64([14])
-            ann_id = data_dict["ann_id"] # torch.int64([14])
-            object_cat = data_dict["object_cat"] # torch.int64([14])
-            unique_multiple = data_dict["unique_multiple"] # torch.int64([14])
-            load_time = data_dict["load_time"] # torch.float64([14])
+            # point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])
+            # lang_feat = data_dict["lang_feat"] # torch.float32([14, 126, 300])
+            # lang_len = data_dict["lang_len"] # torch.int64([14])
+            # center_label = data_dict["center_label"] # torch.float32([14, 128, 3])
+            # heading_class_label = data_dict["heading_class_label"] # torch.int64([14, 128])
+            # heading_residual_label = data_dict["heading_residual_label"] # torch.int64([14, 128])
+            # size_class_label = data_dict["size_class_label"] # torch.int64([14, 128])
+            # size_residual_label = data_dict["size_residual_label"] # torch.float32([14, 128, 3])
+            # num_bbox = data_dict["num_bbox"] # torch.int64([14])
+            # sem_cls_label = data_dict["sem_cls_label"] # torch.int64([14, 128])
+            # box_label_mask = data_dict["box_label_mask"] # torch.float32([14, 128])
+            # vote_label = data_dict["vote_label"] # torch.float32([14, 40000, 9])
+            # vote_label_mask = data_dict["vote_label_mask"] # torch.int64([14, 40000])
+            # scan_idx = data_dict["scan_idx"] # torch.int64([14])
+            # pcl_color = data_dict["pcl_color"] # torch.float32([14, 40000, 3]), range -1 to 1
+            # ref_box_label = data_dict["ref_box_label"] # torch.int64([14, 128])
+            # ref_center_label = data_dict["ref_center_label"] # torch.float32([14, 3])
+            # ref_heading_class_label = data_dict["ref_heading_class_label"] # torch.int64([14])
+            # ref_heading_residual_label = data_dict["ref_heading_residual_label"] # torch.int64([14])
+            # ref_size_class_label = data_dict["ref_size_class_label"] # torch.int64([14])
+            # ref_size_residual_label = data_dict["ref_size_residual_label"] # torch.float32([14, 3])
+            # object_id = data_dict["object_id"] # torch.int64([14])
+            # ann_id = data_dict["ann_id"] # torch.int64([14])
+            # object_cat = data_dict["object_cat"] # torch.int64([14])
+            # unique_multiple = data_dict["unique_multiple"] # torch.int64([14])
+            # load_time = data_dict["load_time"] # torch.float64([14])
 
 
             # initialize the running loss
@@ -365,54 +357,50 @@ class Solver():
                 # forward
                 start = time.time()
                 data_dict = self._forward(data_dict)
-                self._compute_loss(data_dict)
-                self.log[phase]["forward"].append(time.time() - start)
+                print('forward time:', time.time() - start)
 
                 # backward
                 if phase == "train":
+                    self._compute_loss(data_dict)
+                    self.log[phase]["forward"].append(time.time() - start)
                     start = time.time()
                     self._backward()
                     self.log[phase]["backward"].append(time.time() - start)
             
             # eval
-            import pdb
-            pdb.set_trace()
-            start = time.time()
-            self._eval(data_dict)
-            self.log[phase]["eval"].append(time.time() - start)
+            if phase == 'val':
+                start = time.time()
+                pred_sample, gt_sample = inference(data_dict=data_dict, config=self.config)
+                pred_list += pred_sample
+                gt_list += gt_sample
+                self.log[phase]["eval"].append(time.time() - start)
 
             # record log
-            self.log[phase]["loss"].append(self._running_log["loss"].item())
-            self.log[phase]["ref_loss"].append(self._running_log["ref_loss"].item())
-            self.log[phase]["lang_loss"].append(self._running_log["lang_loss"].item())
-            self.log[phase]["objectness_loss"].append(self._running_log["objectness_loss"].item())
-            self.log[phase]["vote_loss"].append(self._running_log["vote_loss"].item())
-            self.log[phase]["box_loss"].append(self._running_log["box_loss"].item())
-
-            self.log[phase]["lang_acc"].append(self._running_log["lang_acc"])
-            self.log[phase]["ref_acc"].append(self._running_log["ref_acc"])
-            self.log[phase]["obj_acc"].append(self._running_log["obj_acc"])
-            self.log[phase]["pos_ratio"].append(self._running_log["pos_ratio"])
-            self.log[phase]["neg_ratio"].append(self._running_log["neg_ratio"])
-            self.log[phase]["iou_rate_0.25"].append(self._running_log["iou_rate_0.25"])
-            self.log[phase]["iou_rate_0.5"].append(self._running_log["iou_rate_0.5"])                
-
+            if phase == 'train':
+                self.log[phase]["loss"].append(self._running_log["loss"].item())
+                self.log[phase]["ref_loss"].append(self._running_log["ref_loss"].item())
+                self.log[phase]["lang_loss"].append(self._running_log["lang_loss"].item())
+                self.log[phase]["objectness_loss"].append(self._running_log["objectness_loss"].item())
+                self.log[phase]["vote_loss"].append(self._running_log["vote_loss"].item())
+                self.log[phase]["box_loss"].append(self._running_log["box_loss"].item())
+            
+            import pdb
             # report
             if phase == "train":
                 iter_time = self.log[phase]["fetch"][-1]
                 iter_time += self.log[phase]["forward"][-1]
                 iter_time += self.log[phase]["backward"][-1]
-                iter_time += self.log[phase]["eval"][-1]
+                # iter_time += self.log[phase]["eval"][-1]
                 self.log[phase]["iter_time"].append(iter_time)
                 if (self._global_iter_id + 1) % self.verbose == 0:
                     self._train_report(epoch_id)
 
                 # evaluation
-                if self._global_iter_id % self.val_step == 0:
+                if (self._global_iter_id + 0) % self.val_step == 0:
                     print("evaluating...")
                     # val
                     self._feed(self.dataloader["val"], "val", epoch_id)
-                    self._dump_log("val")
+                    # self._dump_log("val")
                     self._set_phase("train")
                     self._epoch_report(epoch_id)
 
@@ -420,6 +408,9 @@ class Solver():
                 self._dump_log("train")
                 self._global_iter_id += 1
 
+        if phase == 'val':
+            self._eval(data_dict, pred_list, gt_list)
+            
 
         # check best
         if phase == "val":
@@ -451,8 +442,8 @@ class Solver():
 
     def _dump_log(self, phase):
         log = {
-            "loss": ["loss", "ref_loss", "lang_loss", "objectness_loss", "vote_loss", "box_loss"],
-            "score": ["lang_acc", "ref_acc", "obj_acc", "pos_ratio", "neg_ratio", "iou_rate_0.25", "iou_rate_0.5"]
+            "loss": ["loss", "ref_loss", "lang_loss", "objectness_loss", "vote_loss", "box_loss"]
+            # "score": ["lang_acc", "ref_acc", "obj_acc", "pos_ratio", "neg_ratio", "iou_rate_0.25", "iou_rate_0.5"]
         }
         for key in log:
             for item in log[key]:
