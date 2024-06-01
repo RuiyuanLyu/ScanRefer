@@ -113,11 +113,12 @@ def get_solver(args, dataloader):
 
     if args.use_checkpoint:
         print("loading checkpoint {}...".format(args.use_checkpoint))
-        stamp = args.use_checkpoint
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         root = os.path.join(CONF.PATH.OUTPUT, stamp)
-        checkpoint = torch.load(os.path.join(CONF.PATH.OUTPUT, args.use_checkpoint, "checkpoint.tar"))
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        checkpoint = torch.load(args.use_checkpoint)
+        model.load_state_dict(checkpoint)
+        os.makedirs(root, exist_ok=True)
+        # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     else:
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if args.tag: stamp += "_"+args.tag.upper()

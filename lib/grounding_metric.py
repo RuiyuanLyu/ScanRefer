@@ -53,18 +53,15 @@ def average_precision(recalls, precisions, mode='area'):
         raise ValueError(
             'Unrecognized mode, only "area" and "11points" are supported')
     return ap
-    
-mapping = {
-    'single_attribute_unique': 'sin_attr_uni',
-    'single_attribute_common': 'sin_attr_com',
-    'single_space': 'sin_space',
-    'single_eq': 'sin_eq',
-    'inter_or': 'int_or',
-    'inter_space_oo': 'int_space',
-    'inter_attribute_oo': 'int_attr',
-    'other': 'other',
-    'overall': 'overall'
-}
+
+def abbr(sub_class):
+    sub_class = sub_class.lower()
+    sub_class.replace('single', 'sngl')
+    sub_class.replace('inter', 'int')
+    sub_class.replace('unique', 'uniq')
+    sub_class.replace('common', 'cmn')
+    return sub_class
+
 
 def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix=''):
     """
@@ -92,7 +89,7 @@ def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix=''):
         gt_anno = gt_anno_list[sample_idx]
 
         target_scores = det_anno['score']  # (num_query, )
-        top_idxs =  torch.argsort(target_scores, descending=True)[:20] #HACK: hard coded
+        top_idxs =  torch.argsort(target_scores, descending=True)
         target_scores = target_scores[top_idxs]
         pred_center = det_anno['center'][top_idxs]
         pred_size = det_anno['size'][top_idxs]
@@ -170,11 +167,14 @@ def ground_eval(gt_anno_list, det_anno_list, logger=None):
             'sub_class': str
     """
     iou_thr = [0.25, 0.5]
-    reference_options = [v for k, v in mapping.items()]
+    reference_options = [abbr(gt_anno.get('sub_class', 'other')) for gt_anno in gt_anno_list]
+    reference_options = list(set(reference_options))
+    reference_options.sort()
+    reference_options.append('overall')
     assert len(det_anno_list) == len(gt_anno_list)
     results = {}
     for ref in reference_options:
-        indices = [i for i, gt_anno in enumerate(gt_anno_list) if gt_anno.get('sub_class', 'other').strip('vg_') == ref]
+        indices = [i for i, gt_anno in enumerate(gt_anno_list) if abbr(gt_anno.get('sub_class', 'other')) == ref]
         sub_gt_annos = [gt_anno_list[i] for i in indices ]
         sub_det_annos = [det_anno_list[i] for i in indices ]
         ret = ground_eval_subset(sub_gt_annos, sub_det_annos, logger=logger, prefix=ref)
@@ -201,6 +201,7 @@ def ground_eval(gt_anno_list, det_anno_list, logger=None):
     table_data = [header]
     table_rows = list(zip(*table_columns))
     table_data += table_rows
+    table_data = [list(row) for row in zip(*table_data)] # transpose the table
     table = AsciiTable(table_data)
     table.inner_footing_row_border = True
     # print('\n' + table.table)

@@ -182,6 +182,8 @@ class Solver():
         self._total_iter["train"] = len(self.dataloader["train"]) * epoch
         self._total_iter["val"] = len(self.dataloader["val"]) * self.val_step
         
+        self._feed(self.dataloader["val"], "val", 0)
+        
         for epoch_id in range(epoch):
             try:
                 self._log("epoch {} starting...".format(epoch_id + 1))
@@ -357,7 +359,7 @@ class Solver():
                 # forward
                 start = time.time()
                 data_dict = self._forward(data_dict)
-                print('forward time:', time.time() - start)
+                # print('forward time:', time.time() - start)
 
                 # backward
                 if phase == "train":
