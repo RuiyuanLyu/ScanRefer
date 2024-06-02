@@ -63,7 +63,41 @@ def abbr(sub_class:str):
     return sub_class
 
 
-def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix=''):
+def nms_with_boxes_split(centers, sizes, rotmats, iou_thr, scores):
+    """
+    Non-maximum suppression algorithm that uses a list of boxes to filter out
+    overlapping bounding boxes.
+
+    Parameters:
+    - centers, sizes, rotmats: boxes to be filtered, with shape (num_preds, 3), (num_preds, 3), (num_preds, 3, 3)
+    - iou_thr: IoU threshold for filtering overlapping boxes
+    - scores: scores of each bounding box (num_preds)
+
+    Returns:
+    - keep_inds: indices of bounding boxes that are kept after NMS
+    """
+    # faster: do not compute all ious.
+    # Sort the bounding boxes by their scores in descending order
+    sorted_inds = np.argsort(-scores)
+    centers = centers[sorted_inds]
+    sizes = sizes[sorted_inds]
+    rotmats = rotmats[sorted_inds]
+    scores = scores[sorted_inds]
+
+    # Perform non-maximum suppression
+    keep_inds = []    
+    for i in range(len(scores)):
+        keep_inds.append(i)
+        iou_row = euler_iou3d_split(centers[i:i+1], sizes[i:i+1], rotmats[i:i+1], centers, sizes, rotmats)
+        iou_row.reshape(-1)
+        rmv_inds = np.where(iou_row > iou_thr)[0]
+        rmv_inds = list(set(rmv_inds))
+        keep_inds += rmv_inds
+    keep_inds = np.array(keep_inds)
+    keep_inds = sorted_inds[keep_inds]
+    return keep_inds
+
+def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix='', apply_nms=True):
     """
         det_anno_list: list of dictionaries with keys:
             'bboxes_3d': (N, 9) or a (list, tuple) (center, size, rotmat): (N, 3), (N, 3), (N, 3, 3)
@@ -87,14 +121,23 @@ def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix=''):
     for sample_idx in range(num_samples):
         det_anno = det_anno_list[sample_idx]
         gt_anno = gt_anno_list[sample_idx]
-
+        
         target_scores = det_anno['score']  # (num_query, )
         top_idxs =  torch.argsort(target_scores, descending=True)
         target_scores = target_scores[top_idxs]
         pred_center = det_anno['center'][top_idxs]
         pred_size = det_anno['size'][top_idxs]
         pred_rot = det_anno['rot'][top_idxs]
-        
+
+        if apply_nms:
+            pred_objectness = det_anno['objectness'] #TODO: pass objectness in
+            pred_objectness = pred_objectness[top_idxs]
+            keep_inds = nms_with_boxes_split(pred_center, pred_size, pred_rot, 0.15, pred_objectness)
+            pred_center = pred_center[keep_inds]
+            pred_size = pred_size[keep_inds]
+            pred_rot = pred_rot[keep_inds]
+            target_scores = target_scores[keep_inds]
+
         gt_center = gt_anno['center']
         gt_size = gt_anno['size']
         gt_rot = gt_anno['rot']
@@ -211,3 +254,37 @@ def ground_eval(gt_anno_list, det_anno_list, logger=None):
     print('\n' + table.table)
 
     return ret
+
+def nms_with_iou_matrix(iou_matrix, iou_thr, scores):
+    """
+    Non-maximum suppression algorithm that uses an IoU matrix to filter out
+    overlapping bounding boxes.
+
+    Parameters:
+    - iou_matrix: IoU matrix between predictions and ground truths (num_preds, num_preds)
+    - iou_thr: IoU threshold for filtering overlapping boxes
+    - scores: scores of each bounding box (num_preds)
+
+    Returns:
+    - keep_inds: indices of bounding boxes that are kept after NMS
+    """
+    # Sort the bounding boxes by their scores in descending order
+    sorted_inds = np.argsort(-scores)
+    iou_matrix = iou_matrix[sorted_inds, :]
+    iou_matrix = iou_matrix[:, sorted_inds]
+    scores = scores[sorted_inds]
+
+    # Perform non-maximum suppression
+    keep_inds = []
+    rmv_inds = []
+    for i in range(len(scores)):
+        if i in rmv_inds:
+            continue
+        keep_inds.append(i)
+        iou_row = iou_matrix[i, :]
+        rmv_inds += np.where(iou_row > iou_thr)[0].tolist()
+        rmv_inds = list(set(rmv_inds))
+    keep_inds = np.array(keep_inds)
+    keep_inds = sorted_inds[keep_inds]
+    return keep_inds
+

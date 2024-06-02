@@ -15,7 +15,7 @@ from lib.ap_helper import parse_predictions
 from lib.loss import SoftmaxRankingLoss
 from utils.box_util import get_3d_box, get_3d_box_batch, box3d_iou
 from lib.euler_utils import bbox_to_corners
-from grounding_metric import ground_eval
+from grounding_metric_nms import ground_eval
 from copy import deepcopy
 
 def eval_ref_one_sample(pred_bbox, gt_bbox):
@@ -81,6 +81,7 @@ def inference(data_dict, config, use_lang_classifier=False, use_oracle=False, us
     pred_size = pred_size.squeeze(2)
     pred_size = pred_size.detach().cpu()
     pred_score = data_dict["cluster_ref"].detach().cpu()
+    pred_objectness = data_dict["objectness_scores"].detach().cpu()
     gt_bbox = data_dict['target_bbox'].cpu()
     gt_rot_mats = data_dict['target_rot_mat'].cpu()
     gt_ref = data_dict['ref_box_label'].cpu()
@@ -91,7 +92,7 @@ def inference(data_dict, config, use_lang_classifier=False, use_oracle=False, us
         pred_rot_mat_single = pred_rot_mat[i][mask]
         pred_size_single = pred_size[i][mask]
         pred_score_single = pred_score[i][mask]
-        pred_res.append({'center': pred_center_single, 'size': pred_size_single, 'rot': pred_rot_mat_single, 'score': pred_score_single})
+        pred_res.append({'center': pred_center_single, 'size': pred_size_single, 'rot': pred_rot_mat_single, 'score': pred_score_single, 'objectness': pred_objectness})
     
 
         gt_center = gt_bbox[i, gt_ref[i]][:, :3]    # TODO yesname: only work for single gt box setting
