@@ -196,11 +196,11 @@ class ScannetReferenceDataset(Dataset):
                 target_bboxes_rot_mat = euler_to_matrix_np(target_bboxes[:, 6:9])
                 rot_angle = np.random.uniform(-0.087266, 0.087266)
                 # rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
-                rot_mat = rotz(rot_angle)
+                rot_mat = rotz(rot_angle / np.pi * 180)
                 point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
                 # target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "z")
-                target_bboxes[:, 0:3] = np.dot(target_bboxes[:, 0:3], rot_mat)
-                target_bboxes_rot_mat = np.matmul(target_bboxes_rot_mat, rot_mat)
+                target_bboxes[:, 0:3] = np.dot(target_bboxes[:, 0:3], np.transpose(rot_mat))
+                target_bboxes_rot_mat = np.matmul(target_bboxes_rot_mat, np.transpose(rot_mat))
                 
                 # Scale
                 scale_factor = np.random.uniform(0.9, 1.1)

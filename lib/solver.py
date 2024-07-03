@@ -182,7 +182,7 @@ class Solver():
         self._total_iter["train"] = len(self.dataloader["train"]) * epoch
         self._total_iter["val"] = len(self.dataloader["val"]) * self.val_step
         
-        self._feed(self.dataloader["val"], "val", 0)
+        # self._feed(self.dataloader["val"], "val", 0)
         
         for epoch_id in range(epoch):
             try:
@@ -398,7 +398,7 @@ class Solver():
                     self._train_report(epoch_id)
 
                 # evaluation
-                if (self._global_iter_id + 0) % self.val_step == 0:
+                if (self._global_iter_id + 1) % self.val_step == 0:
                     print("evaluating...")
                     # val
                     self._feed(self.dataloader["val"], "val", epoch_id)

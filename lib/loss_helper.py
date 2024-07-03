@@ -14,7 +14,7 @@ from utils.nn_distance import nn_distance, huber_loss
 from lib.ap_helper import parse_predictions
 from lib.loss import SoftmaxRankingLoss, SigmoidRankingLoss
 from utils.box_util import get_3d_box, get_3d_box_batch, box3d_iou, box3d_iou_batch
-from lib.euler_utils import bbox_to_corners, chamfer_distance, axis_aligned_bbox_overlaps_3d
+from lib.euler_utils import bbox_to_corners, chamfer_distance, axis_aligned_bbox_overlaps_3d, euler_iou3d
 
 FAR_THRESHOLD = 0.6
 NEAR_THRESHOLD = 0.3
@@ -225,15 +225,12 @@ def compute_reference_loss(data_dict, config):
     gt_center = data_dict['center_label'].detach() # (B,3)
     gt_rot_mat = data_dict['target_rot_mat'].detach()
     gt_boxes = data_dict['target_bbox'].detach()
-    gt_size = gt_boxes[:, 3:6].detach()
+    gt_size = gt_boxes[:, :, 3:6].detach()
     gt_ref = data_dict['ref_box_label'].detach()
     
     # convert gt bbox parameters to bbox corners
-    # gt_corners = bbox_to_corners(gt_center, gt_size, gt_rot_mat)
-    # gt_obb_batch = config.param2obb_batch(gt_center[:, 0:3], gt_heading_class, gt_heading_residual,
-    #                 gt_size_class, gt_size_residual)
-    # gt_bbox_batch = get_3d_box_batch(gt_obb_batch[:, 3:6], gt_obb_batch[:, 6], gt_obb_batch[:, 0:3])
-
+    gt_corners = bbox_to_corners(gt_center, gt_size, gt_rot_mat)
+    
     # compute the iou score for all predictd positive ref
     batch_size, num_proposals = cluster_preds.shape
     labels = np.zeros((batch_size, num_proposals))
@@ -242,8 +239,9 @@ def compute_reference_loss(data_dict, config):
         pred_boxes = torch.concat([pred_center[i], pred_size[i]], dim=1)
         gt_boxes_single = gt_boxes[i, gt_ref[i]]
         num_gts = gt_boxes_single.shape[0]
-        # pred_corners = bbox_to_corners(pred_center[i], pred_size[i], pred_rot_mat[i])
-        ious = axis_aligned_bbox_overlaps_3d(pred_boxes, gt_boxes_single[:, :6])
+        pred_corners = bbox_to_corners(pred_center[i], pred_size[i].clamp(min=1e-2), pred_rot_mat[i])
+        ious = euler_iou3d(pred_corners, gt_corners[i, gt_ref[i]])
+        # ious = axis_aligned_bbox_overlaps_3d(pred_boxes, gt_boxes_single[:, :6])
         for j in range(num_gts):
             labels[i, ious[:, j].argmax()] = 1 # treat the bbox with highest iou score as the gt
 
