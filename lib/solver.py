@@ -308,6 +308,8 @@ class Solver():
         for data_dict in dataloader:
             # move to cuda
             for key in data_dict:
+                if key == "lang_len":
+                    continue
                 data_dict[key] = data_dict[key].cuda()
             # es_mod
             # point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])

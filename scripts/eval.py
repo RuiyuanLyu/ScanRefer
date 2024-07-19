@@ -145,6 +145,8 @@ def eval_ref(args):
             predictions = {}
             for data in tqdm(dataloader):
                 for key in data:
+                    if key == "lang_len":
+                        continue
                     data[key] = data[key].cuda()
 
                 # feed
@@ -390,6 +392,8 @@ def eval_det(args):
     sem_acc = []
     for data in tqdm(dataloader):
         for key in data:
+            if key == "lang_len":
+                continue
             data[key] = data[key].cuda()
 
         # feed
