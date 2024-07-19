@@ -149,7 +149,8 @@ def get_solver(args, dataloader):
         lr_decay_step=LR_DECAY_STEP,
         lr_decay_rate=LR_DECAY_RATE,
         bn_decay_step=BN_DECAY_STEP,
-        bn_decay_rate=BN_DECAY_RATE
+        bn_decay_rate=BN_DECAY_RATE,
+        eval_only=args.eval_only,
     )
     num_params = get_num_params(model)
 
@@ -267,6 +268,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_bidir", action="store_true", help="Use bi-directional GRU.")
     parser.add_argument("--use_pretrained", type=str, help="Specify the folder name containing the pretrained detection module.")
     parser.add_argument("--use_checkpoint", type=str, help="Specify the checkpoint root", default="")
+    parser.add_argument("--eval_only", action="store_true", help="Only evaluate the model.")
     args = parser.parse_args()
 
     # setting

@@ -212,6 +212,7 @@ def compute_reference_loss(data_dict, config):
     # predicted bbox
     pred_ref = data_dict['cluster_ref'].detach() # (B,)
     pred_center = data_dict['center'].detach() # (B,K,3)
+    bsz = pred_center.shape[0]
     
     pred_rot_mat = data_dict['rot_mat'].detach()
     pred_size_class = torch.argmax(data_dict['size_scores'], -1) # B,num_proposal
@@ -222,15 +223,15 @@ def compute_reference_loss(data_dict, config):
     pred_size_residual = pred_size_residual.squeeze(2).detach() # B,num_proposal,3
 
     # ground truth bbox
-    gt_center = data_dict['center_label'].detach() # (B,3)
+    gt_center = data_dict['center_label'].detach() # (B, max_obj_per_scene, 3)
     gt_rot_mat = data_dict['target_rot_mat'].detach()
     gt_boxes = data_dict['target_bbox'].detach()
     gt_size = gt_boxes[:, :, 3:6].detach()
+    gt_size = gt_size.clamp(min=2e-2)
     gt_ref = data_dict['ref_box_label'].detach()
     
-    # convert gt bbox parameters to bbox corners
-    gt_corners = bbox_to_corners(gt_center, gt_size, gt_rot_mat)
-    
+    # set precision to float64 when computing gt corners
+    gt_corners = bbox_to_corners(gt_center.to(torch.float64), gt_size.to(torch.float64), gt_rot_mat.to(torch.float64)).to(torch.float32)
     # compute the iou score for all predictd positive ref
     batch_size, num_proposals = cluster_preds.shape
     labels = np.zeros((batch_size, num_proposals))
@@ -239,7 +240,7 @@ def compute_reference_loss(data_dict, config):
         pred_boxes = torch.concat([pred_center[i], pred_size[i]], dim=1)
         gt_boxes_single = gt_boxes[i, gt_ref[i]]
         num_gts = gt_boxes_single.shape[0]
-        pred_corners = bbox_to_corners(pred_center[i], pred_size[i].clamp(min=1e-2), pred_rot_mat[i])
+        pred_corners = bbox_to_corners(pred_center[i], pred_size[i].clamp(min=2e-2), pred_rot_mat[i])
         ious = euler_iou3d(pred_corners, gt_corners[i, gt_ref[i]])
         # ious = axis_aligned_bbox_overlaps_3d(pred_boxes, gt_boxes_single[:, :6])
         for j in range(num_gts):

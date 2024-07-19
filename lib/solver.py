@@ -87,7 +87,7 @@ BEST_REPORT_TEMPLATE = """
 class Solver():
     def __init__(self, model, config, dataloader, optimizer, stamp, val_step=10, 
     detection=True, reference=True, use_lang_classifier=True,
-    lr_decay_step=None, lr_decay_rate=None, bn_decay_step=None, bn_decay_rate=None):
+    lr_decay_step=None, lr_decay_rate=None, bn_decay_step=None, bn_decay_rate=None, eval_only=False):
 
         self.epoch = 0                    # set in __call__
         self.verbose = 0                  # set in __call__
@@ -107,6 +107,8 @@ class Solver():
         self.lr_decay_rate = lr_decay_rate
         self.bn_decay_step = bn_decay_step
         self.bn_decay_rate = bn_decay_rate
+
+        self.eval_only = eval_only
 
         self.best = {
             "epoch": 0,
@@ -181,38 +183,39 @@ class Solver():
         self.verbose = verbose
         self._total_iter["train"] = len(self.dataloader["train"]) * epoch
         self._total_iter["val"] = len(self.dataloader["val"]) * self.val_step
-        
-        # self._feed(self.dataloader["val"], "val", 0)
-        
-        for epoch_id in range(epoch):
-            try:
-                self._log("epoch {} starting...".format(epoch_id + 1))
+        if self.eval_only:
+            self._log("eval only mode, skip training...\n")    
+            self._feed(self.dataloader["val"], "val", 0)
+        else:
+            for epoch_id in range(epoch):
+                try:
+                    self._log("epoch {} starting...".format(epoch_id + 1))
 
-                # feed 
-                self._feed(self.dataloader["train"], "train", epoch_id)
+                    # feed 
+                    self._feed(self.dataloader["train"], "train", epoch_id)
 
-                # save model
-                self._log("saving last models...\n")
-                model_root = os.path.join(CONF.PATH.OUTPUT, self.stamp)
-                torch.save(self.model.state_dict(), os.path.join(model_root, "model_last.pth"))
+                    # save model
+                    self._log("saving last models...\n")
+                    model_root = os.path.join(CONF.PATH.OUTPUT, self.stamp)
+                    torch.save(self.model.state_dict(), os.path.join(model_root, "model_last.pth"))
 
-                # update lr scheduler
-                if self.lr_scheduler:
-                    print("update learning rate --> {}\n".format(self.lr_scheduler.get_lr()))
-                    self.lr_scheduler.step()
+                    # update lr scheduler
+                    if self.lr_scheduler:
+                        print("update learning rate --> {}\n".format(self.lr_scheduler.get_lr()))
+                        self.lr_scheduler.step()
 
-                # update bn scheduler
-                if self.bn_scheduler:
-                    print("update batch normalization momentum --> {}\n".format(self.bn_scheduler.lmbd(self.bn_scheduler.last_epoch)))
-                    self.bn_scheduler.step()
-                
-            except KeyboardInterrupt:
-                # finish training
-                self._finish(epoch_id)
-                exit()
+                    # update bn scheduler
+                    if self.bn_scheduler:
+                        print("update batch normalization momentum --> {}\n".format(self.bn_scheduler.lmbd(self.bn_scheduler.last_epoch)))
+                        self.bn_scheduler.step()
+                    
+                except KeyboardInterrupt:
+                    # finish training
+                    self._finish(epoch_id)
+                    exit()
 
-        # finish training
-        self._finish(epoch_id)
+            # finish training
+            self._finish(epoch_id)
 
     def _log(self, info_str):
         self.log_fout.write(info_str + "\n")

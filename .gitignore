@@ -22,6 +22,7 @@ lib/pointnet2/pointnet2.egg-info/
 
 # output
 outputs/
+mxh-exp/
 
 # delete
 docs/.DS_Store
@@ -31,3 +32,4 @@ demo/.DS_Store
 upload/
 
 .vscode
+*.lprof

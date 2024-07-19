@@ -1,11 +1,10 @@
 # Copyright (c) OpenRobotLab. All rights reserved.
 from typing import Dict, List, Optional, Sequence, Union, Any
-# qall的意思：把所有query的结果收集起来，算一个整体的ap. 而不是每个query的ap然后取平均. 
-# qall是旧版本，这份代码用来存档而已。
 from terminaltables import AsciiTable
 import logging
 import numpy as np
 import torch
+from tqdm import tqdm
 from lib.euler_utils import euler_iou3d_split
 
 def average_precision(recalls, precisions, mode='area'):
@@ -57,108 +56,90 @@ def average_precision(recalls, precisions, mode='area'):
 
 def abbr(sub_class):
     sub_class = sub_class.lower()
-    sub_class.replace('single', 'sngl')
-    sub_class.replace('inter', 'int')
-    sub_class.replace('unique', 'uniq')
-    sub_class.replace('common', 'cmn')
+    sub_class = sub_class.replace('single', 'sngl')
+    sub_class = sub_class.replace('inter', 'int')
+    sub_class = sub_class.replace('unique', 'uniq')
+    sub_class = sub_class.replace('common', 'cmn')
+    sub_class = sub_class.replace('attribute', 'attr')
+    if 'sngl' in sub_class and ('attr' in sub_class or 'eq' in sub_class):
+        sub_class = 'vg_sngl_attr'
     return sub_class
 
-
-def ground_eval_subset(gt_anno_list, det_anno_list, logger=None, prefix=''):
-    """
-        det_anno_list: list of dictionaries with keys:
-            'bboxes_3d': (N, 9) or a (list, tuple) (center, size, rotmat): (N, 3), (N, 3), (N, 3, 3)
-            'target_scores_3d': (N, )
-        gt_anno_list: list of dictionaries with keys:
-            'gt_bboxes_3d': (M, 9) or a (list, tuple) (center, size, rotmat): (M, 3), (M, 3), (M, 3, 3)
-            'sub_class': str
-    """
-    assert len(det_anno_list) == len(gt_anno_list)
+def ground_eval_single_query(gt_anno, det_anno, logger=None, prefix=''):
     iou_thr = [0.25, 0.5]
-    num_samples = len(gt_anno_list) # each sample contains multiple pred boxes
-    total_gt_boxes = 0
-    # these lists records for each sample, whether a gt box is matched or not
-    gt_matched_records = [[] for _ in iou_thr]
-    # these lists records for each pred box, NOT for each sample        
-    sample_indices = [] # each pred box belongs to which sample
-    confidences = [] # each pred box has a confidence score
-    ious = [] # each pred box has a ious, shape (num_gt) in the corresponding sample
-    # record the indices of each reference type
+    target_scores = det_anno['score']  # (num_query, )
+    top_idxs =  torch.argsort(target_scores, descending=True)
+    target_scores = target_scores[top_idxs]
+    pred_center = det_anno['center'][top_idxs]
+    pred_size = det_anno['size'][top_idxs]
+    pred_rot = det_anno['rot'][top_idxs]
+    
+    gt_center = gt_anno['center']
+    gt_size = gt_anno['size']
+    gt_rot = gt_anno['rot']
 
-    for sample_idx in range(num_samples):
-        det_anno = det_anno_list[sample_idx]
-        gt_anno = gt_anno_list[sample_idx]
+    num_preds = pred_center.shape[0]
+    num_gts = gt_center.shape[0]
+    
+    if num_gts == 0:
+        ret = {}
+        for t in iou_thr:
+            ret[f'{prefix}@{t}'] = np.nan
+            ret[f'{prefix}@{t}_rec'] = np.nan
+        ret[prefix + '_num_gt'] = num_gts
+        return ret
 
-        target_scores = det_anno['score']  # (num_query, )
-        top_idxs =  torch.argsort(target_scores, descending=True)
-        target_scores = target_scores[top_idxs]
-        pred_center = det_anno['center'][top_idxs]
-        pred_size = det_anno['size'][top_idxs]
-        pred_rot = det_anno['rot'][top_idxs]
-        
-        gt_center = gt_anno['center']
-        gt_size = gt_anno['size']
-        gt_rot = gt_anno['rot']
+    ious = euler_iou3d_split(pred_center, pred_size, pred_rot, gt_center, gt_size, gt_rot)
+    # num_pred 
 
-        num_preds = pred_center.shape[0]
-        num_gts = gt_center.shape[0]
-        total_gt_boxes += num_gts
-        for iou_idx in range(len(iou_thr)):
-            gt_matched_records[iou_idx].append(np.zeros(num_gts, dtype=bool))
-
-        iou_mat = euler_iou3d_split(pred_center, pred_size, pred_rot, gt_center, gt_size, gt_rot)
-        for i, score in enumerate(target_scores):
-            sample_indices.append(sample_idx)
-            confidences.append(score)
-            ious.append(iou_mat[i])
-
-
-    confidences = np.array(confidences)
+    confidences = np.array(target_scores)
     sorted_inds = np.argsort(-confidences)
-    sample_indices = [sample_indices[i] for i in sorted_inds]
-    ious = [ious[i] for i in sorted_inds]
-
+    gt_matched_records = [np.zeros((num_gts), dtype=bool) for _ in iou_thr]
     tp_thr = {}
     fp_thr = {}
     for thr in iou_thr:
-        tp_thr[f'{prefix}@{thr}'] = np.zeros(len(sample_indices))
-        fp_thr[f'{prefix}@{thr}'] = np.zeros(len(sample_indices))
+        tp_thr[f'{prefix}@{thr}'] = np.zeros(num_preds)
+        fp_thr[f'{prefix}@{thr}'] = np.zeros(num_preds)
 
-    for d, sample_idx in enumerate(sample_indices):
+    for d, pred_idx in enumerate(range(num_preds)):
         iou_max = -np.inf
-        num_gts = gt_anno_list[sample_idx]['center'].shape[0]
         cur_iou = ious[d]
+        num_gts = cur_iou.shape[0]
+
         if num_gts > 0:
             for j in range(num_gts):
                 iou = cur_iou[j]
                 if iou > iou_max:
                     iou_max = iou
                     jmax = j
-
+        
         for iou_idx, thr in enumerate(iou_thr):
             if iou_max >= thr:
-                if not gt_matched_records[iou_idx][sample_idx][jmax]:
-                    gt_matched_records[iou_idx][sample_idx][jmax] = True
+                if not gt_matched_records[iou_idx][jmax]:
+                    gt_matched_records[iou_idx][jmax] = True
                     tp_thr[f'{prefix}@{thr}'][d] = 1.0
                 else:
                     fp_thr[f'{prefix}@{thr}'][d] = 1.0
             else:
                 fp_thr[f'{prefix}@{thr}'][d] = 1.0
-
     ret = {}
     for t in iou_thr:
         metric = prefix + '@' + str(t)
         fp = np.cumsum(fp_thr[metric])
         tp = np.cumsum(tp_thr[metric])
-        recall = tp / float(total_gt_boxes)
+        recall = tp / float(num_gts)
         precision = tp / np.maximum(tp + fp, np.finfo(np.float64).eps)
         ap = average_precision(recall, precision)
         ret[metric] = float(ap)
-        best_recall = recall[-1] if len(recall) > 0 else 0
+        best_recall = recall[-1] 
         ret[metric + '_rec'] = float(best_recall)
+    ret[prefix + '_num_gt'] = num_gts
     return ret
 
-def ground_eval(gt_anno_list, det_anno_list, logger=None):
+
+
+
+def ground_eval(gt_annos, det_annos, logger=None):
     """
         det_anno_list: list of dictionaries with keys:
             'bboxes_3d': (N, 9) or a (list, tuple) (center, size, rotmat): (N, 3), (N, 3), (N, 3, 3)
@@ -168,47 +149,61 @@ def ground_eval(gt_anno_list, det_anno_list, logger=None):
             'sub_class': str
     """
     iou_thr = [0.25, 0.5]
-    reference_options = [abbr(gt_anno.get('sub_class', 'other')) for gt_anno in gt_anno_list]
+    reference_options = [abbr(gt_anno.get('sub_class', 'other')) for gt_anno in gt_annos]
     reference_options = list(set(reference_options))
     reference_options.sort()
     reference_options.append('overall')
-    assert len(det_anno_list) == len(gt_anno_list)
-    results = {}
+    assert len(det_annos) == len(gt_annos)
+    metric_results = {}
+    for i, (gt_anno, det_anno) in tqdm(enumerate(zip(gt_annos, det_annos))):
+        partial_metric = ground_eval_single_query(gt_anno, det_anno, logger=logger, prefix=abbr(gt_anno.get('sub_class', 'other')))
+        for k, v in partial_metric.items():
+            if k not in metric_results:
+                metric_results[k] = []
+            metric_results[k].append(v)
+    for thr in iou_thr:
+        metric_results['overall@' + str(thr)] = []
+        metric_results['overall@' + str(thr) + '_rec'] = []
+    metric_results['overall_num_gt'] = 0
     for ref in reference_options:
-        indices = [i for i, gt_anno in enumerate(gt_anno_list) if abbr(gt_anno.get('sub_class', 'other')) == ref]
-        sub_gt_annos = [gt_anno_list[i] for i in indices ]
-        sub_det_annos = [det_anno_list[i] for i in indices ]
-        ret = ground_eval_subset(sub_gt_annos, sub_det_annos, logger=logger, prefix=ref)
-        for k, v in ret.items():
-            results[k] = v
-    overall_ret = ground_eval_subset(gt_anno_list, det_anno_list, logger=logger, prefix='overall')
-    for k, v in overall_ret.items():
-        results[k] = v
-
+        for thr in iou_thr:
+            metric = ref + '@' + str(thr)
+            if ref != 'overall':
+                metric_results['overall@' + str(thr)] += metric_results[metric]
+                metric_results['overall@' + str(thr) + '_rec'] += metric_results[metric + '_rec']
+            ap = np.nanmean(metric_results[metric])
+            rec = np.nanmean(metric_results[metric + '_rec'])
+            metric_results[metric] = ap
+            metric_results[metric + '_rec'] = rec       
+        metric_results[ref + '_num_gt'] = np.sum(metric_results[ref + '_num_gt'])
+        if ref != 'overall':
+            metric_results['overall_num_gt'] += np.sum(metric_results[ref + '_num_gt'])
+    # Print the precision and recall for each iou threshold
     header = ['Type']
     header.extend(reference_options)
     table_columns = [[] for _ in range(len(header))]
-    ret = {}
     for t in iou_thr:
         table_columns[0].append('AP  '+str(t))
         table_columns[0].append('Rec '+str(t))            
         for i, ref in enumerate(reference_options):
             metric = ref + '@' + str(t)
-            ap = results[metric]
-            best_recall = results[metric + '_rec']
+            assert isinstance(metric, str)
+            ap = metric_results[metric]
+            best_recall = metric_results[metric + '_rec']
             table_columns[i+1].append(f'{float(ap):.4f}')
             table_columns[i+1].append(f'{float(best_recall):.4f}')
+    table_columns[0].append('Num GT')            
+    for i, ref in enumerate(reference_options):
+        # add num_gt
+        table_columns[i+1].append(f'{int(metric_results[ref + "_num_gt"])}')
 
     table_data = [header]
     table_rows = list(zip(*table_columns))
     table_data += table_rows
     table_data = [list(row) for row in zip(*table_data)] # transpose the table
     table = AsciiTable(table_data)
-    table.inner_footing_row_border = True
-    # print('\n' + table.table)
     if logger is not None:
         logger.write('\n' + table.table + '\n')
         logger.flush()
     print('\n' + table.table)
-
-    return ret
+    return metric_results

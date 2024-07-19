@@ -13,6 +13,7 @@ import numpy as np
 import multiprocessing as mp
 import torch
 from torch.utils.data import Dataset
+from tqdm import tqdm
 
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 from lib.config import CONF
@@ -71,6 +72,7 @@ class ScannetReferenceDataset(Dataset):
         self.use_normal = use_normal        
         self.use_multiview = use_multiview
         self.augment = augment
+        self.debug = False
 
         # load data
         self._load_data()
@@ -450,9 +452,12 @@ class ScannetReferenceDataset(Dataset):
 
         # add scannet data
         self.scene_list = sorted(list(set([data["scene_id"] for data in self.scanrefer])))
+        if self.debug:
+            self.scene_list = self.scene_list[:10]
+            self.scanrefer = [sr for sr in self.scanrefer if sr["scene_id"] in self.scene_list]
         # load scene data
         self.scene_data = {}
-        for scene_id in self.scene_list:
+        for scene_id in tqdm(self.scene_list):
             # "/mnt/hwfile/OpenRobotLab/lvruiyuan/pcd_data/pcd_with_global_alignment"
             if scene_id not in self.es_info:
                 print(f"drop due to {scene_id} not found in es info")
