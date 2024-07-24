@@ -97,6 +97,7 @@ def inference(data_dict, config, use_lang_classifier=False, use_oracle=False, us
         gt_center = gt_bbox[i, gt_ref[i]][:, :3]    # TODO yesname: only work for single gt box setting
         gt_size = gt_bbox[i, gt_ref[i]][:, 3:6]
         gt_rot_mat = gt_rot_mats[i, gt_ref[i]]
+        print("gt_center shape:", gt_center.shape)
         gt_res.append({'center': gt_center.cpu(), 'size': gt_size.cpu(), 'rot': gt_rot_mat.cpu(), 'sub_class': data_dict['sub_class'][i]})
 
     return pred_res, gt_res
