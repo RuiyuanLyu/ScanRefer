@@ -13,6 +13,8 @@ sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 import lib.pointnet2.pointnet2_utils
 from lib.pointnet2.pointnet2_modules import PointnetSAModuleVotes
 
+from pytorch3d.transforms import euler_angles_to_matrix
+
 class ProposalModule(nn.Module):
     def __init__(self, num_class, num_heading_bin, num_size_cluster, mean_size_arr, num_proposal, sampling, seed_feat_dim=256):
         super().__init__() 
@@ -89,6 +91,14 @@ class ProposalModule(nn.Module):
         heading_scores = net_transposed[:,:,5:5+num_heading_bin]
         heading_residuals_normalized = net_transposed[:,:,5+num_heading_bin:5+num_heading_bin*2]
         
+        angle_classes = heading_scores.argmax(-1) # Bxnum_proposal
+        angle_residuals = (heading_residuals_normalized * (np.pi/num_heading_bin)).squeeze()
+        pred_rotz = angle_classes * (np.pi / num_heading_bin) + angle_residuals # bsz, 
+        pred_rotx = torch.zeros_like(pred_rotz)
+        pred_roty = torch.zeros_like(pred_rotz)
+        pred_rot_zxy = torch.stack([pred_rotz, pred_rotx, pred_roty], dim=-1)
+        rot_mat = euler_angles_to_matrix(pred_rot_zxy, 'ZXY')
+
         size_scores = net_transposed[:,:,5+num_heading_bin*2:5+num_heading_bin*2+num_size_cluster]
         size_residuals_normalized = net_transposed[:,:,5+num_heading_bin*2+num_size_cluster:5+num_heading_bin*2+num_size_cluster*4].view([batch_size, num_proposal, num_size_cluster, 3]) # Bxnum_proposalxnum_size_clusterx3
         
@@ -100,9 +110,11 @@ class ProposalModule(nn.Module):
         data_dict['heading_scores'] = heading_scores # Bxnum_proposalxnum_heading_bin
         data_dict['heading_residuals_normalized'] = heading_residuals_normalized # Bxnum_proposalxnum_heading_bin (should be -1 to 1)
         data_dict['heading_residuals'] = heading_residuals_normalized * (np.pi/num_heading_bin) # Bxnum_proposalxnum_heading_bin
+        data_dict['rot_mat'] = rot_mat
         data_dict['size_scores'] = size_scores
         data_dict['size_residuals_normalized'] = size_residuals_normalized
         data_dict['size_residuals'] = size_residuals_normalized * torch.from_numpy(mean_size_arr.astype(np.float32)).cuda().unsqueeze(0).unsqueeze(0)
+        data_dict['size_calc'] = (size_residuals_normalized + 1) * torch.from_numpy(mean_size_arr.astype(np.float32)).cuda().unsqueeze(0).unsqueeze(0)
         data_dict['sem_cls_scores'] = sem_cls_scores
 
         return data_dict

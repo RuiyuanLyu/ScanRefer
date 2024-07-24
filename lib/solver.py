@@ -16,7 +16,7 @@ from torch.optim.lr_scheduler import StepLR, MultiStepLR
 sys.path.append(os.path.join(os.getcwd(), "lib")) # HACK add the lib folder
 from lib.config import CONF
 from lib.loss_helper import get_loss
-from lib.eval_helper import get_eval
+from lib.eval_helper import get_eval, inference, get_eval_9dof
 from utils.eta import decode_eta
 from lib.pointnet2.pytorch_utils import BNMomentumScheduler
 
@@ -87,7 +87,7 @@ BEST_REPORT_TEMPLATE = """
 class Solver():
     def __init__(self, model, config, dataloader, optimizer, stamp, val_step=10, 
     detection=True, reference=True, use_lang_classifier=True,
-    lr_decay_step=None, lr_decay_rate=None, bn_decay_step=None, bn_decay_rate=None):
+    lr_decay_step=None, lr_decay_rate=None, bn_decay_step=None, bn_decay_rate=None, eval_only=False):
 
         self.epoch = 0                    # set in __call__
         self.verbose = 0                  # set in __call__
@@ -107,6 +107,8 @@ class Solver():
         self.lr_decay_rate = lr_decay_rate
         self.bn_decay_step = bn_decay_step
         self.bn_decay_rate = bn_decay_rate
+
+        self.eval_only = eval_only
 
         self.best = {
             "epoch": 0,
@@ -278,7 +280,11 @@ class Solver():
         self._running_log["box_loss"] = data_dict["box_loss"]
         self._running_log["loss"] = data_dict["loss"]
 
-    def _eval(self, data_dict):
+    def _eval(self, data_dict, pred_list, gt_list):
+        metric = get_eval_9dof(pred_list, gt_list, self.log_fout)
+        for key in metric:
+            self._running_log[key] = metric[key]
+
         data_dict = get_eval(
             data_dict=data_dict,
             config=self.config,
@@ -295,7 +301,9 @@ class Solver():
         self._running_log["iou_rate_0.25"] = np.mean(data_dict["ref_iou_rate_0.25"])
         self._running_log["iou_rate_0.5"] = np.mean(data_dict["ref_iou_rate_0.5"])
 
+
     def _feed(self, dataloader, phase, epoch_id):
+        print('phase:', phase)
         # switch mode
         self._set_phase(phase)
 
@@ -303,14 +311,16 @@ class Solver():
         self._reset_log(phase)
 
         # change dataloader
-        dataloader = dataloader if phase == "train" else tqdm(dataloader)
+        dataloader = tqdm(dataloader) if phase == "train" else tqdm(dataloader)
 
+        pred_list = []
+        gt_list = []
         for data_dict in dataloader:
             # move to cuda
             for key in data_dict:
-                if key == "lang_len":
-                    continue
-                data_dict[key] = data_dict[key].cuda()
+                if key not in ['sub_class', 'lang_len']:
+                    data_dict[key] = data_dict[key].cuda()
+            # import pdb; pdb.set_trace()
             # es_mod
             # point_clouds = data_dict["point_clouds"] # torch.float32([14, 40000, 7])
             # lang_feat = data_dict["lang_feat"] # torch.float32([14, 126, 300])
@@ -371,13 +381,17 @@ class Solver():
 
                 # backward
                 if phase == "train":
+                    self._compute_loss(data_dict)
+                    self.log[phase]["forward"].append(time.time() - start)
                     start = time.time()
                     self._backward()
                     self.log[phase]["backward"].append(time.time() - start)
             
             # eval
             start = time.time()
-            self._eval(data_dict)
+            pred_sample, gt_sample = inference(data_dict=data_dict, config=self.config)
+            pred_list += pred_sample
+            gt_list += gt_sample
             self.log[phase]["eval"].append(time.time() - start)
 
             # record log
@@ -401,7 +415,7 @@ class Solver():
                 iter_time = self.log[phase]["fetch"][-1]
                 iter_time += self.log[phase]["forward"][-1]
                 iter_time += self.log[phase]["backward"][-1]
-                iter_time += self.log[phase]["eval"][-1]
+                # iter_time += self.log[phase]["eval"][-1]
                 self.log[phase]["iter_time"].append(iter_time)
                 if (self._global_iter_id + 1) % self.verbose == 0:
                     self._train_report(epoch_id)
@@ -419,6 +433,9 @@ class Solver():
                 self._dump_log("train")
                 self._global_iter_id += 1
 
+        if phase == 'val':
+            self._eval(data_dict, pred_list, gt_list)
+            
 
         # check best
         if phase == "val":

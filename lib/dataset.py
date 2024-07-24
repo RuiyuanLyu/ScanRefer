@@ -28,6 +28,8 @@ SCANNET_V2_TSV = os.path.join(CONF.PATH.SCANNET_META, "scannetv2-labels.combined
 # MULTIVIEW_DATA = os.path.join(CONF.PATH.SCANNET_DATA, "enet_feats.hdf5")
 MULTIVIEW_DATA = CONF.MULTIVIEW
 GLOVE_PICKLE = os.path.join(CONF.PATH.DATA, "glove.p")
+from .euler_utils import euler_to_matrix_np
+
 
 class ScannetReferenceDataset(Dataset):
        
@@ -122,6 +124,9 @@ class ScannetReferenceDataset(Dataset):
         ref_size_class_label = 0
         ref_size_residual_label = np.zeros(3) # bbox size residual for reference target
 
+        target_bboxes_rot_mat = None    # If target bboxes rot mat is not None, then the target bbox euler angle is not trusted
+
+
         if self.split != "test":
             num_bbox = instance_bboxes.shape[0] if instance_bboxes.shape[0] < MAX_NUM_OBJ else MAX_NUM_OBJ
             target_bboxes_mask[0:num_bbox] = 1
@@ -155,14 +160,26 @@ class ScannetReferenceDataset(Dataset):
                 target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "y")
 
                 # Rotation along up-axis/Z-axis
+                gt_rotz = angle_classes * (np.pi / DC.num_heading_bin) + angle_residuals # num_obj, 
+                gt_rot_xyz = np.zeros((MAX_NUM_OBJ, 3))
+                gt_rot_xyz[:, 0] = gt_rotz
+                target_bboxes_rot_mat = euler_to_matrix_np(gt_rot_xyz)
                 rot_angle = (np.random.random()*np.pi/18) - np.pi/36 # -5 ~ +5 degree
                 rot_mat = rotz(rot_angle)
                 point_cloud[:,0:3] = np.dot(point_cloud[:,0:3], np.transpose(rot_mat))
-                target_bboxes = rotate_aligned_boxes_along_axis(target_bboxes, rot_mat, "z")
+                target_bboxes[:, 0:3] = np.dot(target_bboxes[:, 0:3], np.transpose(rot_mat))
+                target_bboxes_rot_mat = np.matmul(target_bboxes_rot_mat, np.transpose(rot_mat))
+                
+                # Scale
+                # scale_factor = np.random.uniform(0.9, 1.1)
+                # target_bboxes[:, 0:6] *= scale_factor
+                # point_cloud[:,0:3] *= scale_factor
 
                 # Translation
-                point_cloud, target_bboxes = self._translate(point_cloud, target_bboxes)
-
+                # point_cloud, target_bboxes = self._translate(point_cloud, target_bboxes)
+                trans_factor = np.random.normal(scale=np.array([.1, .1, .1], dtype=np.float32), size=3).T
+                point_cloud[:, 0:3] += trans_factor
+                target_bboxes[:, 0:3] += trans_factor
             # compute votes *AFTER* augmentation
             # generate votes
             # Note: since there's no map between bbox instance labels and
@@ -187,6 +204,11 @@ class ScannetReferenceDataset(Dataset):
 
             # construct the reference target label for each bbox
             ref_box_label = np.zeros(MAX_NUM_OBJ)
+            if target_bboxes_rot_mat is None:
+                gt_rotz = angle_classes * (np.pi / DC.num_heading_bin) + angle_residuals # num_obj, 
+                gt_rot_xyz = np.zeros((MAX_NUM_OBJ, 3))
+                gt_rot_xyz[:, 0] = gt_rotz
+                target_bboxes_rot_mat = euler_to_matrix_np(gt_rot_xyz)
             for i, gt_id in enumerate(instance_bboxes[:num_bbox,-1]):
                 if gt_id == object_id:
                     ref_box_label[i] = 1
@@ -215,6 +237,8 @@ class ScannetReferenceDataset(Dataset):
         data_dict["center_label"] = target_bboxes.astype(np.float32)[:,0:3] # (MAX_NUM_OBJ, 3) for GT box center XYZ
         data_dict["heading_class_label"] = angle_classes.astype(np.int64) # (MAX_NUM_OBJ,) with int values in 0,...,NUM_HEADING_BIN-1
         data_dict["heading_residual_label"] = angle_residuals.astype(np.float32) # (MAX_NUM_OBJ,)
+        data_dict["target_bbox"] = target_bboxes.astype(np.float32)
+        data_dict["target_rot_mat"] = target_bboxes_rot_mat.astype(np.float32)
         data_dict["size_class_label"] = size_classes.astype(np.int64) # (MAX_NUM_OBJ,) with int values in 0,...,NUM_SIZE_CLUSTER
         data_dict["size_residual_label"] = size_residuals.astype(np.float32) # (MAX_NUM_OBJ, 3)
         data_dict["num_bbox"] = np.array(num_bbox).astype(np.int64)
@@ -224,7 +248,6 @@ class ScannetReferenceDataset(Dataset):
         data_dict["vote_label_mask"] = point_votes_mask.astype(np.int64)
         data_dict["scan_idx"] = np.array(idx).astype(np.int64)
         data_dict["pcl_color"] = pcl_color
-        data_dict["ref_box_label"] = ref_box_label.astype(np.int64) # 0/1 reference labels for each object bbox
         data_dict["ref_box_label"] = ref_box_label.astype(np.int64) # 0/1 reference labels for each object bbox
         data_dict["ref_center_label"] = ref_center_label.astype(np.float32)
         data_dict["ref_heading_class_label"] = np.array(int(ref_heading_class_label)).astype(np.int64)
@@ -236,6 +259,7 @@ class ScannetReferenceDataset(Dataset):
         data_dict["object_cat"] = np.array(object_cat).astype(np.int64)
         data_dict["unique_multiple"] = np.array(self.unique_multiple_lookup[scene_id][str(object_id)][ann_id]).astype(np.int64)
         data_dict["pcl_color"] = pcl_color
+        data_dict["sub_class"] = self.scanrefer[idx].get("sub_class", "other")
         data_dict["load_time"] = time.time() - start
 
         return data_dict

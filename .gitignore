@@ -30,5 +30,5 @@ demo/.DS_Store
 upload/
 
 .vscode
-mxh-exp/
 glove.p
+**tmp**
