@@ -33,3 +33,5 @@ upload/
 
 .vscode
 *.lprof
+
+**tmp**
