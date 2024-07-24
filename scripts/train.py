@@ -28,7 +28,7 @@ DC = ScannetDatasetConfig()
 
 def get_dataloader(args, scanrefer, all_scene_list, split, config, augment):
     dataset = ScannetReferenceDataset(
-        scanrefer=scanrefer[split], 
+        scanrefer=scanrefer[split][:100], 
         scanrefer_all_scene=all_scene_list, 
         split=split, 
         num_points=args.num_points, 
@@ -110,11 +110,18 @@ def get_solver(args, dataloader):
 
     if args.use_checkpoint:
         print("loading checkpoint {}...".format(args.use_checkpoint))
-        stamp = args.use_checkpoint
+        stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        if args.tag: stamp += "_"+args.tag.upper()
         root = os.path.join(CONF.PATH.OUTPUT, stamp)
-        checkpoint = torch.load(os.path.join(CONF.PATH.OUTPUT, args.use_checkpoint, "checkpoint.tar"))
-        model.load_state_dict(checkpoint["model_state_dict"])
-        optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+        checkpoint = torch.load(args.use_checkpoint)
+        if args.use_checkpoint == 'ckpt/xyzrgb.pth':
+            checkpoint.pop('proposal.proposal.6.weight')
+            checkpoint.pop('proposal.proposal.6.bias')
+            checkpoint.pop('lang.lang_cls.0.weight')
+            checkpoint.pop('lang.lang_cls.0.bias')
+        model.load_state_dict(checkpoint, strict=False)
+        os.makedirs(root, exist_ok=True)
+        # optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     else:
         stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         if args.tag: stamp += "_"+args.tag.upper()
