@@ -29,5 +29,6 @@ demo/.DS_Store
 
 # misc
 upload/
+ckpt/
 
 .vscode
